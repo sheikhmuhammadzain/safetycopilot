@@ -20,13 +20,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-server/app/*.db
-server/app/*.sqlite
-server/app/*.sqlite3
+
 
 # IDE
 .vscode
