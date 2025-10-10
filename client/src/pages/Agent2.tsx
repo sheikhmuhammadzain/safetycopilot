@@ -379,12 +379,15 @@
     timestamp: number;
   }
 
+  // Constants for memory management
+  const MEMORY_LIMIT = 3; // Retain only last 3 messages for agent context
+
   export default function Agent2() {
     const [question, setQuestion] = useState("");
     const [dataset, setDataset] = useState("all");
     const [loading, setLoading] = useState(false);
     const [response, setResponse] = useState<AgentResponse | null>(null);
-    const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([]);
+    const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([]); // Full history for UI
     const { toast } = useToast();
     
     // Streaming states
@@ -419,6 +422,29 @@
     const bottomRef = useRef<HTMLDivElement | null>(null); // Ref for auto-scroll to bottom
     const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
     const receivedAnswerTokensRef = useRef<boolean>(false);
+
+    /**
+     * Get recent conversation context for agent memory (last N messages)
+     * Best Practice: Separate UI history (full) from agent context (limited)
+     * @param limit - Number of recent messages to include (default: MEMORY_LIMIT)
+     * @returns Array of recent messages for agent context
+     */
+    const getRecentContext = (limit: number = MEMORY_LIMIT): ConversationMessage[] => {
+      return conversationHistory.slice(-limit);
+    };
+
+    /**
+     * Format conversation context for backend API
+     * Converts messages to a format suitable for sending to the agent
+     */
+    const formatContextForBackend = (messages: ConversationMessage[]) => {
+      return messages.map(msg => ({
+        role: 'user',
+        content: msg.question,
+        response: msg.analysis,
+        timestamp: msg.timestamp
+      }));
+    };
 
     // Debounce markdown rendering during streaming to allow complete tokens
     useEffect(() => {
@@ -482,7 +508,7 @@
         // Mark as saved
         savedMessageIdsRef.current.add(messageId);
         
-        // Save to history
+        // Save to history (keeps all messages for UI, agent uses only last N)
         setConversationHistory(prev => [
           ...prev,
           {
@@ -617,10 +643,16 @@
 
       const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
       const WS_BASE = API_BASE.replace('http', 'ws');
+      
+      // BEST PRACTICE: Get only recent context (last 3 messages) for agent memory
+      const recentContext = getRecentContext(MEMORY_LIMIT);
+      const contextForBackend = formatContextForBackend(recentContext);
+      
       const params = new URLSearchParams({
         question: q,
         dataset: d,
-        model: "z-ai/glm-4.6"
+        model: "z-ai/glm-4.6",
+        context: JSON.stringify(contextForBackend)  // Send conversation history for context
       });
 
       const ws = new WebSocket(`${WS_BASE}/ws/agent/stream?${params}`);
@@ -628,7 +660,10 @@
 
       ws.onopen = () => {
         console.log('✅ WebSocket connected');
-      
+        console.log(`📝 Agent memory: ${recentContext.length} recent messages (limit: ${MEMORY_LIMIT})`);
+        if (recentContext.length > 0) {
+          console.log('🧠 Context sent to agent:', contextForBackend);
+        }
       };
 
       ws.onmessage = (event) => {
@@ -905,15 +940,22 @@
             </div>
             <div className="flex items-center gap-2">
               {conversationHistory.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearConversation}
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Clear
-                </Button>
+                <>
+                  <Badge variant="outline" className="flex items-center space-x-1 text-xs" title={`Agent remembers last ${MEMORY_LIMIT} messages. Total history: ${conversationHistory.length}`}>
+                    <span className="text-muted-foreground">
+                      Memory: {Math.min(conversationHistory.length, MEMORY_LIMIT)}/{MEMORY_LIMIT}
+                    </span>
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearConversation}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Clear
+                  </Button>
+                </>
               )}
               <Badge variant="secondary" className="flex items-center space-x-1 text-xs">
                 <Sparkles className="h-3 w-3" />

@@ -959,138 +959,6 @@ async def hse_performance_index_insights(dataset: str = Query("incident", descri
     return ChartInsightsResponse(insights_md="\n".join(parts))
 
 
-@router.get("/risk-calendar-heatmap", response_model=PlotlyFigureResponse)
-async def risk_calendar_heatmap(dataset: str = Query("incident", description="Dataset to use: incident or hazard")):
-    df = get_incident_df() if (dataset or "incident").lower() == "incident" else get_hazard_df()
-    fig = plot_service.create_risk_calendar_heatmap(df)
-    return JSONResponse(content={"figure": to_native_json(fig.to_plotly_json())})
-
-
-@router.get("/risk-calendar-heatmap/insights", response_model=ChartInsightsResponse)
-async def risk_calendar_heatmap_insights(dataset: str = Query("incident", description="Dataset to use: incident or hazard")):
-    # Data-driven insights from the underlying dataset (no chart conversion)
-    df = get_incident_df() if (dataset or "incident").lower() == "incident" else get_hazard_df()
-    title = "Department Risk Score Evolution"
-    if df is None or df.empty or not {"occurrence_date", "department", "risk_score"}.issubset(df.columns):
-        return ChartInsightsResponse(insights_md=f"## {title}\n\n- **Summary**: Not enough data to analyze.")
-
-    cp = df.copy()
-    cp["risk_score"] = pd.to_numeric(cp["risk_score"], errors="coerce")
-    cp["_m"] = pd.to_datetime(cp["occurrence_date"], errors="coerce").dt.to_period("M")
-    risk_pivot = cp.pivot_table(values="risk_score", index="department", columns="_m", aggfunc="mean")
-    z = risk_pivot.to_numpy()
-    metric = "avg_risk_score"
-    # Fallback to counts if risk matrix has no finite numbers
-    if not (isinstance(z, np.ndarray) and np.isfinite(z).any()):
-        count_pivot = cp.pivot_table(values="risk_score", index="department", columns="_m", aggfunc="count")
-        risk_pivot = count_pivot
-        z = risk_pivot.to_numpy()
-        metric = "count_fallback"
-
-    x_labels = [str(c) for c in risk_pivot.columns]
-    y_labels = [str(i) for i in risk_pivot.index]
-
-    # Compute insights metrics
-    z_array = np.array(z, dtype=float)
-    row_means = np.nanmean(z_array, axis=1) if z_array.size else np.array([])
-    col_means = np.nanmean(z_array, axis=0) if z_array.size else np.array([])
-    dept_avg = [
-        {"department": y_labels[i], "avg": float(row_means[i]) if row_means.size else 0.0}
-        for i in range(len(y_labels))
-    ]
-    dept_avg_sorted = sorted([d for d in dept_avg if np.isfinite(d["avg"])], key=lambda d: d["avg"], reverse=True)
-    month_avg = [
-        {"month": x_labels[j], "avg": float(col_means[j]) if col_means.size else 0.0}
-        for j in range(len(x_labels))
-    ]
-
-    top_increases, top_decreases, most_stable = [], [], []
-    if z_array.shape[1] >= 2:
-        changes = []
-        stability = []
-        for i in range(z_array.shape[0]):
-            series = z_array[i, :]
-            idx = np.where(np.isfinite(series))[0]
-            if idx.size == 0:
-                continue
-            first_idx, last_idx = int(idx[0]), int(idx[-1])
-            start_val = float(series[first_idx])
-            end_val = float(series[last_idx])
-            changes.append({
-                "department": y_labels[i],
-                "start": start_val,
-                "end": end_val,
-                "change": end_val - start_val,
-                "start_label": x_labels[first_idx] if first_idx < len(x_labels) else str(first_idx),
-                "end_label": x_labels[last_idx] if last_idx < len(x_labels) else str(last_idx),
-            })
-            stability.append({"department": y_labels[i], "std": float(np.nanstd(series))})
-        top_increases = sorted(changes, key=lambda d: d["change"], reverse=True)[:3]
-        top_decreases = sorted(changes, key=lambda d: d["change"])[:3]
-        most_stable = sorted(stability, key=lambda d: d["std"])[:3]
-
-    # Hotspot
-    hotspot = None
-    if z_array.ndim == 2 and np.isfinite(z_array).any():
-        r, c = np.unravel_index(np.nanargmax(z_array), z_array.shape)
-        hotspot = {"row": r, "col": c, "value": float(z_array[r, c]), "y_label": y_labels[r], "x_label": x_labels[c]}
-
-    summary = {
-        "title": title,
-        "metric": metric,
-        "x_labels": x_labels,
-        "y_labels": y_labels,
-        "department_averages": dept_avg_sorted,
-        "month_averages": month_avg,
-        "top_increases": top_increases,
-        "top_decreases": top_decreases,
-        "most_stable": most_stable,
-        "hotspot": hotspot,
-    }
-
-    # Try AI summarized insights with JSON context
-    try:
-        prompt = (
-            "Analyze the provided JSON metrics from a department-by-month matrix and write an executive markdown insight. "
-            "Include: highest/lowest average departments, departments with largest increase/decrease (with start/end months), "
-            "most stable departments (low std), notable hotspot (dept at month), and 3-4 actionable recommendations."
-        )
-        llm_md = ask_openai(
-            prompt,
-            context=json.dumps(summary, ensure_ascii=False),
-            model="gpt-4o",
-            code_mode=False,
-            multi_df=False,
-        )
-        if llm_md and not llm_md.lower().startswith("openai") and "not installed" not in llm_md.lower():
-            return ChartInsightsResponse(insights_md=llm_md)
-    except Exception:
-        pass
-
-    # Deterministic fallback markdown
-    parts = [f"## {title}"]
-    if dept_avg_sorted:
-        parts.append(f"- **Highest average**: {dept_avg_sorted[0]['department']} ({dept_avg_sorted[0]['avg']:.2f})")
-        parts.append(f"- **Lowest average**: {dept_avg_sorted[-1]['department']} ({dept_avg_sorted[-1]['avg']:.2f})")
-    if top_increases:
-        a = top_increases[0]
-        parts.append(f"- **Largest increase**: {a['department']} from {a['start']:.2f} to {a['end']:.2f} ({a['start_label']} → {a['end_label']})")
-    if top_decreases:
-        d0 = top_decreases[0]
-        parts.append(f"- **Largest decrease**: {d0['department']} from {d0['start']:.2f} to {d0['end']:.2f} ({d0['start_label']} → {d0['end_label']})")
-    if most_stable:
-        s0 = most_stable[0]
-        parts.append(f"- **Most stable**: {s0['department']} (std {s0['std']:.2f})")
-    if hotspot:
-        parts.append(f"- **Hotspot**: {hotspot['y_label']} at {hotspot['x_label']} ({hotspot['value']:.2f})")
-    parts.append("\n### Recommendations")
-    parts.append("- **Action**: Investigate the top rising department for root causes and mitigation.")
-    parts.append("- **Action**: Share best practices from the most stable department.")
-    parts.append("- **Action**: Set monthly targets for high-risk departments and track progress.")
-    parts.append("- **Action**: Review reporting/resolution workflows if volatility is high.")
-    return ChartInsightsResponse(insights_md="\n".join(parts))
-
-
 @router.get("/psm-breakdown", response_model=PlotlyFigureResponse)
 async def psm_breakdown(dataset: str = Query("incident", description="Dataset to use: incident or hazard")):
     df = get_incident_df() if (dataset or "incident").lower() == "incident" else get_hazard_df()
@@ -1132,70 +1000,6 @@ async def psm_breakdown_insights(dataset: str = Query("incident", description="D
     parts.append("\n### Recommendations")
     parts.append("- **Action**: Prioritize top categories for deeper root-cause analysis.")
     parts.append("- **Action**: Track monthly shifts in leading categories.")
-    return ChartInsightsResponse(insights_md="\n".join(parts))
-
-
-@router.get("/consequence-matrix", response_model=PlotlyFigureResponse)
-async def consequence_matrix(dataset: str = Query("incident", description="Dataset to use: incident or hazard")):
-    df = get_incident_df() if (dataset or "incident").lower() == "incident" else get_hazard_df()
-    fig = plot_service.create_consequence_matrix(df)
-    return JSONResponse(content={"figure": to_native_json(fig.to_plotly_json())})
-
-
-@router.get("/consequence-matrix/insights", response_model=ChartInsightsResponse)
-async def consequence_matrix_insights(dataset: str = Query("incident", description="Dataset to use: incident or hazard")):
-    # Data-driven crosstab analysis
-    df = get_incident_df() if (dataset or "incident").lower() == "incident" else get_hazard_df()
-    title = "Actual vs Worst Case Consequence"
-    a_col = 'actual_consequence_incident'
-    w_col = 'worst_case_consequence_incident'
-    if df is None or df.empty or a_col not in df.columns or w_col not in df.columns:
-        return ChartInsightsResponse(insights_md=f"## {title}\n\n- **Summary**: Not enough data to analyze.")
-    ct = pd.crosstab(df[a_col], df[w_col])
-    z = ct.to_numpy(dtype=float)
-    rows = [str(i) for i in ct.index]
-    cols = [str(c) for c in ct.columns]
-    total = float(z.sum()) if z.size else 0.0
-    diag = float(np.trace(z)) if z.ndim == 2 else 0.0
-    off_diag = float(total - diag)
-    hotspot = None
-    if z.ndim == 2 and z.size and np.isfinite(z).any():
-        r, c = np.unravel_index(np.nanargmax(z), z.shape)
-        hotspot = { 'row': rows[r], 'col': cols[c], 'value': float(z[r, c]) }
-    row_totals = { rows[i]: float(np.nansum(z[i, :])) for i in range(z.shape[0]) } if z.ndim == 2 else {}
-    col_totals = { cols[j]: float(np.nansum(z[:, j])) for j in range(z.shape[1]) } if z.ndim == 2 else {}
-    summary = {
-        'title': title,
-        'rows': rows,
-        'cols': cols,
-        'total': total,
-        'diagonal_match': diag,
-        'off_diagonal': off_diag,
-        'row_totals': row_totals,
-        'col_totals': col_totals,
-        'hotspot': hotspot,
-    }
-    try:
-        prompt = (
-            "Analyze the consequence crosstab JSON: highlight where actual equals worst-case (diagonal) versus mismatches, "
-            "largest cells, and recommendations to reduce worst-case gaps. Provide concise markdown."
-        )
-        llm_md = ask_openai(prompt, context=json.dumps(summary, ensure_ascii=False), model="gpt-4o", code_mode=False, multi_df=False)
-        if llm_md and not llm_md.lower().startswith("openai") and "not installed" not in llm_md.lower():
-            return ChartInsightsResponse(insights_md=llm_md)
-    except Exception:
-        pass
-    parts = [f"## {title}"]
-    if total:
-        parts.append(f"- **Total cases**: {total:.0f}")
-        parts.append(f"- **Matches (diagonal)**: {diag:.0f}")
-        parts.append(f"- **Mismatches**: {off_diag:.0f}")
-    if hotspot:
-        parts.append(f"- **Largest cell**: {hotspot['row']} vs {hotspot['col']} ({hotspot['value']:.0f})")
-    parts.append("\n### Recommendations")
-    parts.append("- **Action**: Review scenarios with high worst-case vs actual mismatches.")
-    parts.append("- **Action**: Strengthen controls for categories driving the hotspot.")
-    parts.append("- **Action**: Align risk assessment to improve accuracy (increase diagonal matches).")
     return ChartInsightsResponse(insights_md="\n".join(parts))
 
 
@@ -1252,64 +1056,6 @@ async def data_quality_metrics_insights(dataset: str = Query("incident", descrip
     parts.append("\n### Recommendations")
     parts.append("- **Action**: Improve mandatory capture of root cause and actions.")
     parts.append("- **Action**: Triage records exceeding 95th percentile delays.")
-    return ChartInsightsResponse(insights_md="\n".join(parts))
-
-
-@router.get("/comprehensive-timeline", response_model=PlotlyFigureResponse)
-async def comprehensive_timeline(dataset: str = Query("incident", description="Dataset to use: incident or hazard")):
-    df = get_incident_df() if (dataset or "incident").lower() == "incident" else get_hazard_df()
-    fig = plot_service.create_comprehensive_timeline(df)
-    return JSONResponse(content={"figure": to_native_json(fig.to_plotly_json())})
-
-
-@router.get("/comprehensive-timeline/insights", response_model=ChartInsightsResponse)
-async def comprehensive_timeline_insights(dataset: str = Query("incident", description="Dataset to use: incident or hazard")):
-    title = "Comprehensive HSE Timeline"
-    df = get_incident_df() if (dataset or "incident").lower() == "incident" else get_hazard_df()
-    if df is None or 'occurrence_date' not in df.columns:
-        return ChartInsightsResponse(insights_md=f"## {title}\n\n- **Summary**: Not enough data to analyze.")
-    cp = df.copy()
-    cp['_m'] = pd.to_datetime(cp['occurrence_date'], errors='coerce').dt.to_period('M')
-    agg_dict = {}
-    count_col = 'incident_id' if 'incident_id' in cp.columns else cp.columns[0]
-    agg_dict[count_col] = 'count'
-    for c in ['severity_score','risk_score']:
-        if c in cp.columns:
-            agg_dict[c] = 'mean'
-    for c in ['estimated_cost_impact','estimated_manhours_impact']:
-        if c in cp.columns:
-            agg_dict[c] = 'sum'
-    timeline = cp.groupby('_m').agg(agg_dict)
-    counts = timeline[count_col] if count_col in timeline.columns else pd.Series(dtype=float)
-    trend = None
-    if len(counts) >= 3:
-        last3 = counts.tail(3).values
-        if len(set(last3)) > 1:
-            pct = (last3[-1] - last3[0]) / max(1, last3[0]) * 100.0
-            trend = ("up", float(abs(pct))) if pct > 0 else ("down", float(abs(pct)))
-    summary = {
-        'title': title,
-        'months': [str(ix) for ix in timeline.index],
-        'counts': [int(v) for v in (counts.fillna(0).values if not counts.empty else [])],
-        'severity_mean': [float(v) for v in timeline.get('severity_score', pd.Series(dtype=float)).fillna(0).values],
-        'risk_mean': [float(v) for v in timeline.get('risk_score', pd.Series(dtype=float)).fillna(0).values],
-        'cost_sum': [float(v) for v in timeline.get('estimated_cost_impact', pd.Series(dtype=float)).fillna(0).values],
-        'manhours_sum': [float(v) for v in timeline.get('estimated_manhours_impact', pd.Series(dtype=float)).fillna(0).values],
-        'trend_last3': {'direction': trend[0], 'percent': trend[1]} if trend else None,
-    }
-    try:
-        prompt = "Summarize the monthly timeline: counts trend, severity/risk movement, and cost/manhours highlights with recommendations."
-        md = ask_openai(prompt, context=json.dumps(summary, ensure_ascii=False), model="gpt-4o", code_mode=False, multi_df=False)
-        if md and not md.lower().startswith("openai") and "not installed" not in md.lower():
-            return ChartInsightsResponse(insights_md=md)
-    except Exception:
-        pass
-    parts = [f"## {title}"]
-    if trend:
-        parts.append(f"- **Monthly count trend**: {trend[0]} {trend[1]:.1f}% (last 3 months)")
-    parts.append("\n### Recommendations")
-    parts.append("- **Action**: Investigate any sudden month-over-month spikes.")
-    parts.append("- **Action**: Track severity/risk means and set thresholds.")
     return ChartInsightsResponse(insights_md="\n".join(parts))
 
 
@@ -1406,93 +1152,6 @@ async def location_risk_treemap_insights(dataset: str = Query("incident", descri
     parts.append("\n### Recommendations")
     parts.append("- **Action**: Audit top hotspots for immediate controls.")
     parts.append("- **Action**: Increase monitoring in high-risk sublocations.")
-    return ChartInsightsResponse(insights_md="\n".join(parts))
-
-
-@router.get("/department-spider", response_model=PlotlyFigureResponse)
-async def department_spider(dataset: str = Query("incident", description="Dataset to use: incident or hazard")):
-    df = get_incident_df() if (dataset or "incident").lower() == "incident" else get_hazard_df()
-    fig = plot_service.create_department_spider(df)
-    return JSONResponse(content={"figure": to_native_json(fig.to_plotly_json())})
-
-
-@router.get("/department-spider/insights", response_model=ChartInsightsResponse)
-async def department_spider_insights(dataset: str = Query("incident", description="Dataset to use: incident or hazard")):
-    # Data-driven normalized department metrics (0-100)
-    df = get_incident_df() if (dataset or "incident").lower() == "incident" else get_hazard_df()
-    title = "Department HSE Performance Radar"
-    if df is None or 'department' not in df.columns:
-        return ChartInsightsResponse(insights_md=f"## {title}\n\n- **Summary**: Not enough data to analyze.")
-    cp = df.copy()
-    for col in ['severity_score', 'risk_score', 'reporting_delay_days', 'resolution_time_days', 'root_cause_is_missing', 'corrective_actions_is_missing']:
-        if col not in cp.columns:
-            cp[col] = np.nan
-    def _to_days(series: pd.Series) -> pd.Series:
-        try:
-            if series is None:
-                return series
-            s = series
-            if np.issubdtype(s.dtype, np.timedelta64):
-                return s.dt.total_seconds() / 86400.0
-            if np.issubdtype(s.dtype, np.datetime64):
-                return pd.to_numeric(s, errors='coerce')
-            return pd.to_numeric(s, errors='coerce')
-        except Exception:
-            return pd.to_numeric(series, errors='coerce')
-    cp['reporting_delay_days'] = _to_days(cp['reporting_delay_days'])
-    cp['resolution_time_days'] = _to_days(cp['resolution_time_days'])
-    dm = cp.groupby('department').agg({
-        'severity_score': lambda x: 5 - np.nanmean(pd.to_numeric(x, errors='coerce')),
-        'risk_score': lambda x: 5 - np.nanmean(pd.to_numeric(x, errors='coerce')),
-        'reporting_delay_days': lambda x: max(0, 30 - np.nanmean(pd.to_numeric(x, errors='coerce'))),
-        'resolution_time_days': lambda x: max(0, 60 - np.nanmean(pd.to_numeric(x, errors='coerce'))),
-        'root_cause_is_missing': lambda x: 100 * (1 - np.nanmean(pd.to_numeric(x, errors='coerce'))),
-        'corrective_actions_is_missing': lambda x: 100 * (1 - np.nanmean(pd.to_numeric(x, errors='coerce'))),
-    }).fillna(0)
-    # Normalize each column to 0-100
-    for col in dm.columns:
-        m = dm[col].max()
-        if m and m > 0:
-            dm[col] = (dm[col] / m) * 100
-    # Aggregate overall score (mean of dimensions)
-    dm['overall'] = dm.mean(axis=1)
-    ranked = dm['overall'].sort_values(ascending=False)
-    radar = { 'labels': ['Low Severity','Low Risk','Fast Reporting','Quick Resolution','Root Cause ID','Actions Taken'] }
-    radar['departments'] = [
-        { 'department': str(idx), 'scores': [
-            float(dm.loc[idx, 'severity_score']),
-            float(dm.loc[idx, 'risk_score']),
-            float(dm.loc[idx, 'reporting_delay_days']),
-            float(dm.loc[idx, 'resolution_time_days']),
-            float(dm.loc[idx, 'root_cause_is_missing']),
-            float(dm.loc[idx, 'corrective_actions_is_missing']),
-        ], 'overall': float(dm.loc[idx, 'overall']) } for idx in dm.index
-    ]
-    summary = {
-        'title': title,
-        'ranking': [{ 'department': str(k), 'overall': float(v)} for k, v in ranked.items()],
-        'radar': radar,
-        'top5': [{ 'department': str(k), 'overall': float(v)} for k, v in ranked.head(5).items()],
-        'bottom5': [{ 'department': str(k), 'overall': float(v)} for k, v in ranked.tail(5).items()],
-    }
-    try:
-        prompt = (
-            "From normalized department metrics (0-100), produce markdown insights: top/bottom departments, which dimensions "
-            "(severity, risk, reporting, resolution, root cause ID, actions) drive performance, and 3-4 actions."
-        )
-        llm_md = ask_openai(prompt, context=json.dumps(summary, ensure_ascii=False), model="gpt-4o", code_mode=False, multi_df=False)
-        if llm_md and not llm_md.lower().startswith("openai") and "not installed" not in llm_md.lower():
-            return ChartInsightsResponse(insights_md=llm_md)
-    except Exception:
-        pass
-    parts = [f"## {title}"]
-    if len(ranked) > 0:
-        parts.append(f"- **Top**: {ranked.index[0]} ({ranked.iloc[0]:.1f})")
-        parts.append(f"- **Bottom**: {ranked.index[-1]} ({ranked.iloc[-1]:.1f})")
-    parts.append("\n### Recommendations")
-    parts.append("- **Action**: Address weakest dimensions in bottom departments.")
-    parts.append("- **Action**: Replicate practices from top departments across others.")
-    parts.append("- **Action**: Set targets per dimension (severity/risk/delays) and track monthly.")
     return ChartInsightsResponse(insights_md="\n".join(parts))
 
 
@@ -1997,30 +1656,15 @@ def _build_chart_figure(chart: str, dataset: str = "incident", event_type: str =
         fig = plot_service.create_hse_performance_index(df)
         title = "HSE Performance Index"
         return fig, title
-    if chart_l in ("risk-calendar-heatmap", "risk-calendar"):
-        df = inc if ds_l == "incident" else haz
-        fig = plot_service.create_risk_calendar_heatmap(df)
-        title = "Risk Calendar Heatmap"
-        return fig, title
     if chart_l in ("psm-breakdown", "psm"):
         df = inc if ds_l == "incident" else haz
         fig = plot_service.create_psm_breakdown(df)
         title = "PSM Breakdown"
         return fig, title
-    if chart_l in ("consequence-matrix", "consequence"):
-        df = inc if ds_l == "incident" else haz
-        fig = plot_service.create_consequence_matrix(df)
-        title = "Consequence Matrix"
-        return fig, title
     if chart_l in ("data-quality-metrics", "data-quality"):
         df = inc if ds_l == "incident" else haz
         fig = plot_service.create_data_quality_metrics(df)
         title = "Data Quality Metrics"
-        return fig, title
-    if chart_l in ("comprehensive-timeline", "timeline"):
-        df = inc if ds_l == "incident" else haz
-        fig = plot_service.create_comprehensive_timeline(df)
-        title = "Comprehensive Timeline"
         return fig, title
     if chart_l in ("audit-inspection-tracker", "audit-tracker"):
         fig = plot_service.create_audit_inspection_tracker(aud, ins)
@@ -2030,11 +1674,6 @@ def _build_chart_figure(chart: str, dataset: str = "incident", event_type: str =
         df = inc if ds_l == "incident" else haz
         fig = plot_service.create_location_risk_treemap(df)
         title = "Location Risk Treemap"
-        return fig, title
-    if chart_l in ("department-spider", "spider"):
-        df = inc if ds_l == "incident" else haz
-        fig = plot_service.create_department_spider(df)
-        title = "Department Spider"
         return fig, title
     if chart_l in ("violation-analysis", "violation"):
         # default hazard

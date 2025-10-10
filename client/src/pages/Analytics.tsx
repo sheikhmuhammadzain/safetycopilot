@@ -212,33 +212,15 @@ export default function Analytics() {
 
       {/* Main Content */}
       <main className="p-6 space-y-8">
-        {/* Section 1: Performance & Risk Overview */}
+        {/* Section 1: Audit/Inspection Tracking */}
         <div className="space-y-4">
-          <h2 className="text-xl font-semibold text-foreground">Performance & Risk Overview</h2>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <PlotlyCard title="Risk Calendar Heatmap" endpoint="/analytics/risk-calendar-heatmap" params={{ dataset }} height={420} refreshKey={refreshKey} />
-            <PlotlyCard title="Consequence Matrix" endpoint="/analytics/consequence-matrix" params={{ dataset }} height={420} refreshKey={refreshKey} />
-          </div>
-        </div>
-
-        {/* Section 2: Timeline & Tracking */}
-        <div className="space-y-4">
-          <h2 className="text-xl font-semibold text-foreground">Timeline & Tracking</h2>
+          <h2 className="text-xl font-semibold text-foreground">Audit & Inspection Tracking</h2>
           <div className="grid grid-cols-1 gap-6">
-            <PlotlyCard title="Comprehensive Timeline" endpoint="/analytics/comprehensive-timeline" params={{ dataset }} height={420} refreshKey={refreshKey} />
             <PlotlyCard title="Audit/Inspection Tracker" endpoint="/analytics/audit-inspection-tracker" height={420} refreshKey={refreshKey} />
           </div>
         </div>
 
-        {/* Section 3: Location & Department Analysis */}
-        <div className="space-y-4">
-          <h2 className="text-xl font-semibold text-foreground">Location & Department Analysis</h2>
-          <div className="grid grid-cols-1 lg:grid-cols-1 gap-6">
-            <PlotlyCard title="Department Spider" endpoint="/analytics/department-spider" params={{ dataset }} height={420} refreshKey={refreshKey} />
-          </div>
-        </div>
-
-        {/* Section 4: Facility Heatmaps */}
+        {/* Section 2: Facility Heatmaps */}
         <div className="space-y-4">
           <h2 className="text-xl font-semibold text-foreground">Facility Risk Visualization</h2>
           <div className="grid grid-cols-1 gap-6">
@@ -246,7 +228,7 @@ export default function Analytics() {
           </div>
         </div>
 
-        {/* Section 5: Advanced Analytics */}
+        {/* Section 3: Advanced Analytics */}
         <div className="space-y-4">
           <h2 className="text-xl font-semibold text-foreground">Advanced Analytics</h2>
           

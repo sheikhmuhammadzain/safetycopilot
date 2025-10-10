@@ -20,7 +20,8 @@ async def websocket_agent_stream(
     websocket: WebSocket,
     question: Optional[str] = Query(None),
     dataset: Optional[str] = Query("all"),
-    model: Optional[str] = Query("google/gemini-flash-1.5:free")
+    model: Optional[str] = Query("z-ai/glm-4.6"),
+    context: Optional[str] = Query(None)  # JSON string of conversation history
 ):
     """
     WebSocket endpoint for ultra-fast streaming analysis
@@ -80,12 +81,26 @@ async def websocket_agent_stream(
     
     try:
         # Get query from WebSocket message or query params
+        conversation_history = []
         if not question:
             # Wait for initial message with query
             data = await websocket.receive_json()
             question = data.get("question", "")
             dataset = data.get("dataset", "all")
             model = data.get("model", "z-ai/glm-4.6")
+            context = data.get("context", None)
+        
+        # Parse conversation context if provided
+        if context:
+            try:
+                if isinstance(context, str):
+                    conversation_history = json.loads(context)
+                else:
+                    conversation_history = context
+                print(f"📝 Received {len(conversation_history)} context messages")
+            except Exception as e:
+                print(f"⚠️ Failed to parse context: {e}")
+                conversation_history = []
         
         if not question or not question.strip():
             await websocket.send_json({
@@ -114,7 +129,8 @@ async def websocket_agent_stream(
         # Stream events through WebSocket with tool-based agent
         async for event in run_tool_based_agent(
             query=question,
-            model=model
+            model=model,
+            conversation_history=conversation_history  # Pass context to agent
         ):
             try:
                 # Check if connection is still open before sending

@@ -1348,19 +1348,27 @@ def get_openai_client() -> AsyncOpenAI:
 async def run_tool_based_agent(
     query: str,
     model: str = "z-ai/glm-4.6",  # Free model with function calling
-    max_iterations: int = 100
+    max_iterations: int = 100,
+    conversation_history: List[Dict[str, Any]] = None  # Recent conversation context
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
     Run tool-based agent where AI decides which tools to use
+    
+    Args:
+        query: Current user question
+        model: AI model to use
+        max_iterations: Maximum tool calling iterations
+        conversation_history: Recent conversation messages for context (last 3-5 messages)
     
     OPTIMIZATIONS:
     - Connection pooling (reuse HTTP connections)
     - Data caching (5min TTL for workbook)
     - Reduced streaming overhead
     - Fast model selection
+    - Context-aware responses using conversation history
     
     Flow:
-    1. User asks question
+    1. User asks question (with optional context)
     2. AI analyzes and decides which tools to call
     3. Tools execute and return results (streamed)
     4. AI synthesizes final answer (streamed)
@@ -1373,6 +1381,10 @@ async def run_tool_based_agent(
     
     Note: Rate limits apply to all free models during high demand
     """
+    
+    # Default to empty list if None
+    if conversation_history is None:
+        conversation_history = []
     
     # Send start signal
     yield {
@@ -1599,10 +1611,28 @@ Available datasets: {available_sheets}
 Database: epcl_vehs.db
 """
     
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": query}
-    ]
+    # Build messages array with conversation history for context retention
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    # Add recent conversation history if provided (for context awareness)
+    if conversation_history:
+        for msg in conversation_history:
+            # Add user question
+            messages.append({
+                "role": "user",
+                "content": msg.get("content", "")
+            })
+            # Add assistant response
+            if msg.get("response"):
+                messages.append({
+                    "role": "assistant",
+                    "content": msg.get("response", "")
+                })
+        
+        print(f"📚 Using {len(conversation_history)} previous messages for context")
+    
+    # Add current query
+    messages.append({"role": "user", "content": query})
     
     # Deduplication: avoid repeating identical tool calls
     recent_tool_calls: Dict[str, str] = {}

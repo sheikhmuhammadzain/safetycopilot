@@ -83,31 +83,6 @@ def create_hse_performance_index(df: Optional[pd.DataFrame]):
     return fig
 
 
-def create_risk_calendar_heatmap(df: Optional[pd.DataFrame]):
-    if df is None or 'occurrence_date' not in df.columns or 'department' not in df.columns or 'risk_score' not in df.columns:
-        return go.Figure()
-    cp = df.copy()
-    # Coerce risk_score to numeric to ensure mean aggregation works
-    cp['risk_score'] = pd.to_numeric(cp['risk_score'], errors='coerce')
-    cp['month'] = pd.to_datetime(cp['occurrence_date'], errors='coerce').dt.to_period('M')
-    risk_pivot = cp.pivot_table(values='risk_score', index='department', columns='month', aggfunc='mean')
-    z = risk_pivot.to_numpy()
-    # If no finite values in mean risk matrix, fallback to counts
-    if not (isinstance(z, np.ndarray) and np.isfinite(z).any()):
-        count_pivot = cp.pivot_table(values='risk_score', index='department', columns='month', aggfunc='count')
-        z = count_pivot.to_numpy()
-        x_labels = count_pivot.columns.astype(str).tolist()
-        y_labels = count_pivot.index.astype(str).tolist()
-        fig = px.imshow(z, labels=dict(x='Month', y='Department', color='Count'), x=x_labels, y=y_labels, color_continuous_scale='YlOrRd', title='Department Events Count (Fallback)', aspect='auto', text_auto=True)
-        fig.update_xaxes(tickangle=-45)
-        return fig
-    x_labels = risk_pivot.columns.astype(str).tolist()
-    y_labels = risk_pivot.index.astype(str).tolist()
-    fig = px.imshow(z, labels=dict(x='Month', y='Department', color='Avg Risk Score'), x=x_labels, y=y_labels, color_continuous_scale='RdYlGn_r', title='Department Risk Score Evolution', aspect='auto', text_auto=True)
-    fig.update_xaxes(tickangle=-45)
-    return fig
-
-
 def create_psm_breakdown(incident_df: Optional[pd.DataFrame]):
     if incident_df is None:
         return go.Figure()
@@ -119,14 +94,6 @@ def create_psm_breakdown(incident_df: Optional[pd.DataFrame]):
     if not pse_counts.empty:
         fig.add_trace(go.Bar(x=pse_counts.values, y=pse_counts.index, orientation='h'), row=1, col=2)
     fig.update_layout(title='Process Safety Management Analysis')
-    return fig
-
-
-def create_consequence_matrix(df: Optional[pd.DataFrame]):
-    if df is None or 'actual_consequence_incident' not in df.columns or 'worst_case_consequence_incident' not in df.columns:
-        return go.Figure()
-    ct = pd.crosstab(df['actual_consequence_incident'], df['worst_case_consequence_incident'])
-    fig = px.imshow(ct, labels=dict(x='Worst Case', y='Actual', color='Count'), title='Actual vs Worst Case Consequence Matrix', color_continuous_scale='YlOrRd', text_auto=True)
     return fig
 
 
@@ -145,39 +112,6 @@ def create_data_quality_metrics(incident_df: Optional[pd.DataFrame]):
     if {'resolution_time_days', 'status'}.issubset(incident_df.columns):
         fig.add_trace(go.Box(y=_to_days(incident_df['resolution_time_days']), x=incident_df['status'], name='Resolution by Status'), row=2, col=1)
     fig.update_layout(title='Data Quality Metrics')
-    return fig
-
-
-def create_comprehensive_timeline(df: Optional[pd.DataFrame]):
-    if df is None or 'occurrence_date' not in df.columns:
-        return go.Figure()
-    cp = df.copy()
-    # Use monthly aggregation to align with KPI cards summing first trace
-    cp['_m'] = pd.to_datetime(cp['occurrence_date'], errors='coerce').dt.to_period('M')
-    agg_dict = {}
-    count_col = 'incident_id' if 'incident_id' in cp.columns else cp.columns[0]
-    agg_dict[count_col] = 'count'
-    if 'severity_score' in cp.columns:
-        agg_dict['severity_score'] = 'mean'
-    if 'risk_score' in cp.columns:
-        agg_dict['risk_score'] = 'mean'
-    if 'estimated_cost_impact' in cp.columns:
-        agg_dict['estimated_cost_impact'] = 'sum'
-    if 'estimated_manhours_impact' in cp.columns:
-        agg_dict['estimated_manhours_impact'] = 'sum'
-    agg = cp.groupby('_m').agg(agg_dict).reset_index()
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, subplot_titles=['Incident Count', 'Risk & Severity Scores', 'Cost & Manhour Impact'], row_heights=[0.3, 0.35, 0.35])
-    # First trace: total monthly counts (frontend will sum this series for KPI)
-    fig.add_trace(go.Bar(x=agg['_m'].astype(str), y=agg[count_col], name='Count'), row=1, col=1)
-    if 'severity_score' in agg.columns:
-        fig.add_trace(go.Scatter(x=agg['_m'].astype(str), y=agg['severity_score'], name='Severity', line=dict(color='red')), row=2, col=1)
-    if 'risk_score' in agg.columns:
-        fig.add_trace(go.Scatter(x=agg['_m'].astype(str), y=agg['risk_score'], name='Risk', line=dict(color='orange')), row=2, col=1)
-    if 'estimated_cost_impact' in agg.columns:
-        fig.add_trace(go.Bar(x=agg['_m'].astype(str), y=agg['estimated_cost_impact'], name='Cost ($)', marker_color='green'), row=3, col=1)
-    if 'estimated_manhours_impact' in agg.columns:
-        fig.add_trace(go.Bar(x=agg['_m'].astype(str), y=agg['estimated_manhours_impact'], name='Manhours', marker_color='#34D399'), row=3, col=1)
-    fig.update_layout(title='Comprehensive HSE Timeline')
     return fig
 
 
@@ -222,35 +156,6 @@ def create_location_risk_treemap(df: Optional[pd.DataFrame]):
         '<br>Total Cost: ' + location_data['estimated_cost_impact'].round(0).astype(str)
     )
     fig = px.treemap(location_data, path=['location', 'sublocation'], values='size', color='risk_score', hover_data={'hover_text': True}, color_continuous_scale='RdYlGn_r', title='Location Risk Map (Size=Count, Color=Risk)')
-    return fig
-
-
-def create_department_spider(df: Optional[pd.DataFrame]):
-    if df is None or 'department' not in df.columns:
-        return go.Figure()
-    cp = df.copy()
-    for col in ['severity_score', 'risk_score', 'reporting_delay_days', 'resolution_time_days', 'root_cause_is_missing', 'corrective_actions_is_missing']:
-        if col not in cp.columns:
-            cp[col] = np.nan
-    cp['reporting_delay_days'] = _to_days(cp['reporting_delay_days'])
-    cp['resolution_time_days'] = _to_days(cp['resolution_time_days'])
-    dept_metrics = cp.groupby('department').agg({
-        'severity_score': lambda x: 5 - np.nanmean(x),
-        'risk_score': lambda x: 5 - np.nanmean(x),
-        'reporting_delay_days': lambda x: max(0, 30 - np.nanmean(x)),
-        'resolution_time_days': lambda x: max(0, 60 - np.nanmean(x)),
-        'root_cause_is_missing': lambda x: 100 * (1 - np.nanmean(x)),
-        'corrective_actions_is_missing': lambda x: 100 * (1 - np.nanmean(x)),
-    }).fillna(0)
-    for col in dept_metrics.columns:
-        m = dept_metrics[col].max()
-        if m and m > 0:
-            dept_metrics[col] = (dept_metrics[col] / m) * 100
-    fig = go.Figure()
-    labels = ['Low Severity', 'Low Risk', 'Fast Reporting', 'Quick Resolution', 'Root Cause ID', 'Actions Taken']
-    for dept in dept_metrics.index[:5]:
-        fig.add_trace(go.Scatterpolar(r=dept_metrics.loc[dept].values, theta=labels, fill='toself', name=str(dept)))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), title='Department HSE Performance Radar', showlegend=True)
     return fig
 
 

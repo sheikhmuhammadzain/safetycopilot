@@ -579,8 +579,9 @@ export default function Overview() {
           </div>
         )}
         
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* TRIR */}
+        {/* 🟥 TEMPORARILY HIDDEN: TRIR, LTIR, PSTIR Values (Insufficient Data) */}
+        {/* <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* TRIR *}
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -634,7 +635,7 @@ export default function Overview() {
               </CardContent>
             </Card>
 
-            {/* LTIR */}
+            {/* LTIR *}
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -686,7 +687,7 @@ export default function Overview() {
               </CardContent>
             </Card>
 
-            {/* PSTIR */}
+            {/* PSTIR *}
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -738,7 +739,7 @@ export default function Overview() {
               </CardContent>
             </Card>
 
-            {/* Near-Miss Ratio */}
+            {/* Near-Miss Ratio *}
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -791,7 +792,7 @@ export default function Overview() {
                 )}
               </CardContent>
             </Card>
-        </div>
+        </div> */}
 
         {/* Analytics Overview (hazards first, then incidents) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -1042,8 +1043,8 @@ export default function Overview() {
           </div>
         </div>
 
-        {/* Conversion Analytics */}
-        <Card>
+        {/* 🟥 TEMPORARILY HIDDEN: Conversion Analytics, Hazard Links, Matrix Gauge */}
+        {/* <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <BarChart3 className="h-4 w-4" />
@@ -1052,16 +1053,16 @@ export default function Overview() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 gap-6">
-              {/* KPI cards from JSON metrics */}
+              {/* KPI cards from JSON metrics *}
               <ConversionMetricsCards />
 
-              {/* Hazard–Incident links summary (edges/pairs source) */}
+              {/* Hazard–Incident links summary (edges/pairs source) *}
               <LinksSummary />
 
-              {/* Department-level metrics table */}
+              {/* Department-level metrics table *}
               <DepartmentMetricsTable />
 
-              {/* Existing Plotly visualizations */}
+              {/* Existing Plotly visualizations *}
               <PlotlyCard title="Funnel" endpoint="/analytics/conversion/funnel" height={420} refreshKey={refreshKey} />
               <PlotlyCard title="Time Lag" endpoint="/analytics/conversion/time-lag" height={520} refreshKey={refreshKey} />
               <PlotlyCard title="Hazard to Incident Flow Analysis" endpoint="/analytics/conversion/sankey" height={600} refreshKey={refreshKey} />
@@ -1070,7 +1071,7 @@ export default function Overview() {
               <PlotlyCard title="Metrics Gauge" endpoint="/analytics/conversion/metrics-gauge" height={420} refreshKey={refreshKey} />
             </div>
           </CardContent>
-        </Card>
+        </Card> */}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <RecentList title="Recent Incidents" fetcher={getRecentIncidents} limit={5} />
