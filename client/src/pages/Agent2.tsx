@@ -1,5 +1,6 @@
   import { useState, useRef, useEffect, useDeferredValue } from "react";
   import axios from "axios";
+  import { exportAsMarkdown, exportAsHTML } from "@/utils/exportConversation";
 
   import { SidebarTrigger } from "@/components/ui/sidebar";
   import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +10,7 @@
   import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
   import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
   import { useToast } from "@/hooks/use-toast";
-  import { Send, Code, BarChart3, Sparkles, ChevronDown, ChevronRight, StopCircle, Loader2, BookOpen, Copy, Trash2, ThumbsUp, ThumbsDown, Share2, RefreshCw, MoreHorizontal, Check, Upload, MoveUp, ArrowUp } from "lucide-react";
+  import { Send, Code, BarChart3, Sparkles, ChevronDown, ChevronRight, StopCircle, Loader2, BookOpen, Copy, Trash2, ThumbsUp, ThumbsDown, Share2, RefreshCw, MoreHorizontal, Check, Upload, MoveUp, ArrowUp, Download } from "lucide-react";
   import Plot from "react-plotly.js";
   import ReactMarkdown from "react-markdown";
   import remarkGfm from "remark-gfm";
@@ -385,10 +386,11 @@
   export default function Agent2() {
     const [question, setQuestion] = useState("");
     const [dataset, setDataset] = useState("all");
+    const [persona, setPersona] = useState("default"); // User persona
     const [loading, setLoading] = useState(false);
     const [response, setResponse] = useState<AgentResponse | null>(null);
     const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([]); // Full history for UI
-    const { toast } = useToast();
+    const { toast} = useToast();
     
     // Streaming states
     const [isStreaming, setIsStreaming] = useState(false);
@@ -503,24 +505,32 @@
           return;
         }
         
-        console.log('💾 Saving message to history:', messageId, currentQuestion);
+        console.log('💾 Auto-saving message to history:', messageId, currentQuestion);
         
-        // Mark as saved
+        // Mark as saved FIRST
         savedMessageIdsRef.current.add(messageId);
         
         // Save to history (keeps all messages for UI, agent uses only last N)
-        setConversationHistory(prev => [
-          ...prev,
-          {
-            id: messageId,
-            question: currentQuestion,
-            dataset: currentDataset,
-            toolCalls: toolCalls.slice(),
-            analysis: currentAnalysis || finalAnswer || response?.analysis || response?.answer || "",
-            response: response || null,
-            timestamp: Date.now(),
-          },
-        ]);
+        setConversationHistory(prev => {
+          // Double-check to prevent duplicate (in case manual save already happened)
+          if (prev.some(msg => msg.id === messageId)) {
+            console.log('⏭️ Message already in state (auto-save), skipping:', messageId);
+            return prev;
+          }
+          
+          return [
+            ...prev,
+            {
+              id: messageId,
+              question: currentQuestion,
+              dataset: currentDataset,
+              toolCalls: toolCalls.slice(),
+              analysis: currentAnalysis || finalAnswer || response?.analysis || response?.answer || "",
+              response: response || null,
+              timestamp: Date.now(),
+            },
+          ];
+        });
       }
     }, [isStreaming, currentQuestion, currentAnalysis, finalAnswer, toolCalls, response, currentDataset]);
 
@@ -562,28 +572,19 @@
       
       // Check if already saved
       if (savedMessageIdsRef.current.has(messageId)) {
-        console.log('Message already saved, skipping:', messageId);
+        console.log('⏭️ Message already saved, skipping duplicate save:', messageId);
         return;
       }
-
-      const hasContent = Boolean(
-        currentQuestion ||
-        currentAnalysis ||
-        finalAnswer ||
-        response?.analysis ||
-        response?.answer ||
-        toolCalls.length > 0 ||
-        response
-      );
       
-      if (!hasContent) {
-        console.log('No content to save');
+      // Don't save empty messages (no question, no tool calls, no response)
+      if (!currentQuestion && toolCalls.length === 0 && !response) {
+        console.log('⏭️ Skipping empty message save');
         return;
       }
-
-      console.log('Saving message to history:', messageId, currentQuestion);
       
-      // Mark as saved immediately
+      console.log('💾 Saving message to history:', messageId, currentQuestion);
+      
+      // Mark as saved FIRST to prevent race conditions
       savedMessageIdsRef.current.add(messageId);
       
       const analysisText =
@@ -595,18 +596,27 @@
 
       const analysisToStore = analysisText || "Analysis complete. See tool outputs below.";
 
-      setConversationHistory(prev => [
-        ...prev,
-        {
-          id: messageId,
-          question: currentQuestion,
-          dataset: currentDataset,
-          toolCalls: toolCalls.slice(),
-          analysis: analysisToStore,
-          response: response || null,
-          timestamp: Date.now(),
-        },
-      ]);
+      // Use functional update to prevent stale state and check for duplicates
+      setConversationHistory(prev => {
+        // Double-check if message already exists in state (prevent flash duplicates)
+        if (prev.some(msg => msg.id === messageId)) {
+          console.log('⏭️ Message already in state, skipping:', messageId);
+          return prev;
+        }
+        
+        return [
+          ...prev,
+          {
+            id: messageId,
+            question: currentQuestion,
+            dataset: currentDataset,
+            toolCalls: toolCalls.slice(),
+            analysis: analysisToStore,
+            response: response || null,
+            timestamp: Date.now(),
+          },
+        ];
+      });
     };
 
     const startWebSocketStreaming = (overrideQuestion?: string, overrideDataset?: string) => {
@@ -652,7 +662,8 @@
         question: q,
         dataset: d,
         model: "z-ai/glm-4.6",
-        context: JSON.stringify(contextForBackend)  // Send conversation history for context
+
+        persona: persona  // Send user persona
       });
 
       const ws = new WebSocket(`${WS_BASE}/ws/agent/stream?${params}`);
@@ -924,6 +935,48 @@
       }
     };
 
+    // Export conversation as Markdown (using modular utility)
+    const exportConversationAsMarkdown = () => {
+      exportAsMarkdown({
+        conversationHistory,
+        persona,
+        onSuccess: (message) => {
+          toast({
+            title: "Exported successfully",
+            description: message,
+          });
+        },
+        onError: (error) => {
+          toast({
+            title: error === "No conversation to export" ? "Nothing to export" : "Export failed",
+            description: error === "No conversation to export" ? "Start a conversation first" : error,
+            variant: "destructive",
+          });
+        },
+      });
+    };
+
+    // Export conversation as HTML (using modular utility)
+    const exportConversationAsHTML = () => {
+      exportAsHTML({
+        conversationHistory,
+        persona,
+        onSuccess: (message) => {
+          toast({
+            title: "Exported successfully",
+            description: message,
+          });
+        },
+        onError: (error) => {
+          toast({
+            title: error === "No conversation to export" ? "Nothing to export" : "Export failed",
+            description: error === "No conversation to export" ? "Start a conversation first" : error,
+            variant: "destructive",
+          });
+        },
+      });
+    };
+
     return (
       <div className="min-h-screen bg-background">
         {/* Header */}
@@ -946,6 +999,29 @@
                       Memory: {Math.min(conversationHistory.length, MEMORY_LIMIT)}/{MEMORY_LIMIT}
                     </span>
                   </Badge>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <Download className="h-4 w-4 mr-2" />
+                        Export
+                        <ChevronDown className="h-3 w-3 ml-1" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={exportConversationAsMarkdown}>
+                        <Code className="h-4 w-4 mr-2" />
+                        Export as Markdown
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={exportConversationAsHTML}>
+                        <BarChart3 className="h-4 w-4 mr-2" />
+                        Export as HTML
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -2325,6 +2401,20 @@
           <div className="max-w-4xl mx-auto px-4 pb-6 pt-4">
             <div className="relative bg-background border border-border/80 rounded-3xl shadow-sm hover:shadow-xl transition-shadow duration-200">
               <form onSubmit={handleSubmit} className="flex items-center gap-2 p-2">
+                {/* Persona Selector */}
+                <Select value={persona} onValueChange={setPersona}>
+                  <SelectTrigger className="w-[180px] h-10 rounded-full border-0 bg-muted/50 hover:bg-muted shrink-0">
+                    <SelectValue placeholder="Select role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">General User</SelectItem>
+                    <SelectItem value="mike">Field Operator</SelectItem>
+                    <SelectItem value="safeer">Safety Engineer</SelectItem>
+                    <SelectItem value="sarah">Safety Manager</SelectItem>
+                    <SelectItem value="david">Site Head</SelectItem>
+                  </SelectContent>
+                </Select>
+                
                 {/* Queries Book Button */}
                 <Dialog open={queriesOpen} onOpenChange={setQueriesOpen}>
                   <DialogTrigger asChild>

@@ -37,6 +37,7 @@ from .routers import (
     agent,
     agent_ws,  # WebSocket for ultra-fast streaming
     data,
+    personas,  # User personas for dynamic system prompts
 )
 
 
@@ -71,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(agent.router)
     app.include_router(agent_ws.router)  # WebSocket endpoints
     app.include_router(data.router)
+    app.include_router(personas.router)  # User personas
 
     return app
 

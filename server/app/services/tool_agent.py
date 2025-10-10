@@ -28,6 +28,7 @@ from .data_cache import (
     get_cached_query,
     cache_query
 )
+from .personas import get_persona_system_prompt, list_personas
 
 
 # ==================== Web Search Tool ====================
@@ -1349,7 +1350,8 @@ async def run_tool_based_agent(
     query: str,
     model: str = "z-ai/glm-4.6",  # Free model with function calling
     max_iterations: int = 100,
-    conversation_history: List[Dict[str, Any]] = None  # Recent conversation context
+    conversation_history: List[Dict[str, Any]] = None,  # Recent conversation context
+    persona: str = "default"  # User persona: mike, safeer, sarah, david, or default
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
     Run tool-based agent where AI decides which tools to use
@@ -1359,6 +1361,7 @@ async def run_tool_based_agent(
         model: AI model to use
         max_iterations: Maximum tool calling iterations
         conversation_history: Recent conversation messages for context (last 3-5 messages)
+        persona: User persona for tailored communication style
     
     OPTIMIZATIONS:
     - Connection pooling (reuse HTTP connections)
@@ -1373,11 +1376,6 @@ async def run_tool_based_agent(
     3. Tools execute and return results (streamed)
     4. AI synthesizes final answer (streamed)
     
-    Free models that support function calling (in order of speed):
-    - google/gemini-flash-1.5:free (FASTEST - recommended)
-    - qwen/qwen-2.5-7b-instruct:free
-    - mistralai/mistral-7b-instruct:free
-    - meta-llama/llama-3.1-8b-instruct:free
     
     Note: Rate limits apply to all free models during high demand
     """
@@ -1411,14 +1409,8 @@ async def run_tool_based_agent(
         available_sheets = ["incident", "hazard", "audit", "inspection"]
     available_keys = set(available_sheets)
 
-    # System prompt with runtime sheet list
-    system_prompt = f"""You are Safety Copilot, an AI workplace safety advisor and data analyst built by Qbit Dynamics.
-
-You have access to:
-- Excel workbook data: {available_sheets}
-- SQLite database: epcl_vehs.db
-- Web search: OSHA/NIOSH standards
-- Image search: Safety signs, PPE, diagrams
+    # Base system prompt suffix with tool instructions (common to all personas)
+    base_prompt_suffix = f"""
 
 ═══════════════════════════════════════════════════════════════
 QUERY ANALYSIS & PLANNING (Do this FIRST before calling tools)
@@ -1498,79 +1490,6 @@ Before presenting insights:
 - Indicate confidence level: High (complete data), Medium (partial), Low (limited)
 
 ═══════════════════════════════════════════════════════════════
-RESPONSE STRUCTURE (Tell a compelling story)
-═══════════════════════════════════════════════════════════════
-
-## What's Happening (Key Findings)
-- Lead with the most important insight
-- Use specific numbers with context: "245 incidents (28% of total)"
-- Make comparisons relatable: "That's 3x higher than last quarter"
-- Confidence: [High/Medium/Low]
-
-## Why It Matters (Root Cause Analysis)
-- Explain WHY the pattern exists (not just WHAT)
-- Connect to safety outcomes: "This increases injury risk by..."
-- Identify contributing factors
-- Show business impact: costs, downtime, compliance risks
-
-## What To Do About It (Actionable Recommendations)
-Priority 1 (Immediate - Do this week):
-- Specific action with clear owner
-- Expected impact
-
-Priority 2 (Short-term - Do this month):
-- Preventive measures
-- Process improvements
-
-Priority 3 (Long-term - Do this quarter):
-- Systemic changes
-- Culture shifts
-
-**Standards & Compliance:**
-- Cite OSHA/NIOSH standards when applicable
-- Include links to official guidelines
-- Note any compliance gaps
-
-## The Bottom Line
-- One-sentence summary
-- Key metric to track: "Monitor [metric] weekly"
-
----
-**Data Sources:**
-- List all tools used with their data sources
-- Example: "Excel workbook (via get_top_values), OSHA.gov (via search_web)"
-
-═══════════════════════════════════════════════════════════════
-COMMUNICATION STYLE
-═══════════════════════════════════════════════════════════════
-
-✓ DO:
-- Speak like advising a colleague over coffee
-- Use analogies: "Think of it like..."
-- Make it personal: "Your team is experiencing..."
-- Create urgency for safety issues: "This needs immediate attention because..."
-- Celebrate wins: "Great news - incidents dropped 30%!"
-
-✗ DON'T:
-- Write like a technical report
-- Use jargon without explanation
-- Be vague: "Some departments" → "Operations (245) and Maintenance (189)"
-- Overwhelm with data dumps
-- Ignore the human impact
-
-═══════════════════════════════════════════════════════════════
-FORMATTING RULES
-═══════════════════════════════════════════════════════════════
-
-- Use ## for main sections
-- Use - for bullet points (not numbers unless prioritizing)
-- Bold only for critical emphasis: **URGENT**
-- Keep paragraphs to 2-3 sentences max
-- Format in Table if it result contains any Top values 
-- Use tables for comparing 3+ items also for any tabular data display
-- Include emojis sparingly for visual breaks: 🚨 ⚠️ ✅ 📊
-
-═══════════════════════════════════════════════════════════════
 AVAILABLE TOOLS (12 total)
 ═══════════════════════════════════════════════════════════════
 
@@ -1603,13 +1522,17 @@ CRITICAL REMINDERS
 5. Provide prioritized, actionable recommendations
 6. Cite OSHA/NIOSH standards when relevant
 7. List data sources at the end
-8. Make it conversational, not technical
-9. Focus on human impact and safety outcomes
-10. Self-correct if tools fail
+8. Focus on human impact and safety outcomes
+9. Self-correct if tools fail
 
 Available datasets: {available_sheets}
 Database: epcl_vehs.db
 """
+    
+    # Get persona-specific system prompt
+    system_prompt = get_persona_system_prompt(persona, available_sheets, base_prompt_suffix)
+    
+    print(f"🎭 Using persona: {persona.upper()}")
     
     # Build messages array with conversation history for context retention
     messages = [{"role": "system", "content": system_prompt}]

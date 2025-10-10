@@ -21,7 +21,8 @@ async def websocket_agent_stream(
     question: Optional[str] = Query(None),
     dataset: Optional[str] = Query("all"),
     model: Optional[str] = Query("z-ai/glm-4.6"),
-    context: Optional[str] = Query(None)  # JSON string of conversation history
+    context: Optional[str] = Query(None),  # JSON string of conversation history
+    persona: Optional[str] = Query("default")  # User persona: mike, safeer, sarah, david, or default
 ):
     """
     WebSocket endpoint for ultra-fast streaming analysis
@@ -89,6 +90,7 @@ async def websocket_agent_stream(
             dataset = data.get("dataset", "all")
             model = data.get("model", "z-ai/glm-4.6")
             context = data.get("context", None)
+            persona = data.get("persona", "default")
         
         # Parse conversation context if provided
         if context:
@@ -130,7 +132,8 @@ async def websocket_agent_stream(
         async for event in run_tool_based_agent(
             query=question,
             model=model,
-            conversation_history=conversation_history  # Pass context to agent
+            conversation_history=conversation_history,  # Pass context to agent
+            persona=persona  # Pass persona to agent
         ):
             try:
                 # Check if connection is still open before sending

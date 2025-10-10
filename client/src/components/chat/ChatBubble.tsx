@@ -11,6 +11,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import AITextLoading from "@/components/motion/AITextLoading";
+import { useNavigate } from "react-router-dom";
 
 interface AgentResponse {
   code: string;
@@ -71,6 +72,7 @@ interface ConversationMessage {
 }
 
 export function ChatBubble() {
+  const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [question, setQuestion] = useState("");
@@ -458,7 +460,7 @@ export function ChatBubble() {
       {!isOpen && (
         <div className="fixed bottom-5 right-5 md:bottom-6 md:right-6 z-50">
           <button
-            onClick={() => setIsOpen(true)}
+            onClick={() => navigate('/agent')}
             aria-label="Open Safety Copilot"
             className="group inline-flex relative transition-all duration-300 hover:scale-105"
           >

@@ -70,7 +70,7 @@ def _openrouter_fallback_models(primary: str) -> list[str]:
     fallbacks = [
         normalized,
         "z-ai/glm-4.6",  # Primary free Grok
-        "x-ai/grok-2-latest",
+        "x-ai/grok-4",
         "x-ai/grok-2-1212",
         # Other free fallbacks
         "google/gemini-2.0-flash-exp:free",
