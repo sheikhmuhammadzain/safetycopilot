@@ -1,0 +1,282 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Safety Copilot Design System - Industrial & Professional
+All colors MUST be HSL for consistency */
+
+@layer base {
+  :root {
+    --background: 0 0% 99.2157%;
+    --foreground: 0 0% 0%;
+
+    --card: 0 0% 99.2157%;
+    --card-foreground: 0 0% 0%;
+
+    --popover: 0 0% 98.8235%;
+    --popover-foreground: 0 0% 0%;
+
+    --primary: 93.9394 40.4082% 51.9608%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 214.2857 24.1379% 94.3137%;
+    --secondary-foreground: 0 0% 3.1373%;
+
+    --muted: 0 0% 96.0784%;
+    --muted-foreground: 0 0% 32.1569%;
+
+    --accent: 79.5646 89.7172% 89.1087%;
+    --accent-foreground: 81.5949 140.5082% 20.4360%;
+
+    --destructive: 358.4416 74.7573% 59.6078%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 17.0732% 91.9608%;
+    --input: 0 0% 92.1569%;
+    --ring: 0 0% 0%;
+
+    --radius: 1.4rem;
+    --font-sans: Plus Jakarta Sans, sans-serif;
+    --font-serif: Lora, serif;
+    --font-mono: IBM Plex Mono, monospace;
+    --shadow-2xs: 0px 2px 3px 0px hsl(0 0% 0% / 0.08);
+    --shadow-xs: 0px 2px 3px 0px hsl(0 0% 0% / 0.08);
+    --shadow-sm: 0px 2px 3px 0px hsl(0 0% 0% / 0.16), 0px 1px 2px -1px hsl(0 0% 0% / 0.16);
+    --shadow: 0px 2px 3px 0px hsl(0 0% 0% / 0.16), 0px 1px 2px -1px hsl(0 0% 0% / 0.16);
+    --shadow-md: 0px 2px 3px 0px hsl(0 0% 0% / 0.16), 0px 2px 4px -1px hsl(0 0% 0% / 0.16);
+    --shadow-lg: 0px 2px 3px 0px hsl(0 0% 0% / 0.16), 0px 4px 6px -1px hsl(0 0% 0% / 0.16);
+    --shadow-xl: 0px 2px 3px 0px hsl(0 0% 0% / 0.16), 0px 8px 10px -1px hsl(0 0% 0% / 0.16);
+    --shadow-2xl: 0px 2px 3px 0px hsl(0 0% 0% / 0.40);
+    --tracking-normal: -0.025em;
+    --spacing: 0.27rem;
+
+    /* Safety Copilot specific tokens */
+    --safety-success: 142 76% 36%;
+    --safety-warning: 38 92% 50%;
+    --safety-danger: 0 84% 60%;
+    --safety-info: 201 96% 32%;
+    
+    --kpi-positive: 142 76% 36%;
+    --kpi-negative: 0 84% 60%;
+    --kpi-neutral: 215.4 16.3% 46.9%;
+    
+    --sidebar-bg: 222.2 47.4% 11.2%;
+    --sidebar-text: 210 40% 98%;
+    --sidebar-hover: 222.2 47.4% 15%;
+    
+    --chart-primary: 148.0952 53.3898% 53.7255%;
+    --chart-secondary: 257.9412 100% 60%;
+    --chart-tertiary: 24.8571 98.1308% 58.0392%;
+    --chart-quaternary: 217.0787 76.7241% 54.5098%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(174 84% 35%), hsl(174 84% 45%));
+    --gradient-success: linear-gradient(135deg, hsl(142 76% 36%), hsl(142 76% 46%));
+    --gradient-warning: linear-gradient(135deg, hsl(38 92% 50%), hsl(38 92% 60%));
+    
+    /* Shimmer animation */
+    --shimmer: linear-gradient(110deg, transparent 35%, rgba(255,255,255,0.2) 50%, transparent 65%);
+
+    --sidebar-background: 210 42.8571% 97.2549%;
+    --sidebar-foreground: 0 0% 0%;
+    --sidebar-primary: 0 0% 0%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 92.1569%;
+    --sidebar-accent-foreground: 0 0% 0%;
+    --sidebar-border: 0 0% 92.1569%;
+    --sidebar-ring: 0 0% 0%;
+  }
+
+/* Landing hero dark grid background */
+.bg-grid-dark {
+  background-color: #0f172a; /* slate-900 base (keeps brand accents on top) */
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 40px 40px, 40px 40px;
+  background-position: -1px -1px, -1px -1px;
+}
+
+  .dark {
+    --background: 225 7.1429% 10.9804%;
+    --foreground: 0 0% 94.1176%;
+
+    --card: 228 6.8493% 14.3137%;
+    --card-foreground: 0 0% 94.1176%;
+
+    --popover: 228 6.8493% 14.3137%;
+    --popover-foreground: 0 0% 94.1176%;
+
+    --primary: 93.9394 40.4082% 51.9608%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 226.6667 9.6774% 18.2353%;
+    --secondary-foreground: 0 0% 94.1176%;
+
+    --muted: 226.6667 9.6774% 18.2353%;
+    --muted-foreground: 0 0% 62.7451%;
+
+    --accent: 217.2414 32.5843% 17.4510%;
+    --accent-foreground: 208.2090 100% 73.7255%;
+
+    --destructive: 0 90.604% 70.7843%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 222.8571 6.422% 21.3725%;
+    --input: 222.8571 6.422% 21.3725%;
+    --ring: 257.6687 100% 68.0392%;
+
+    --safety-success: 142 76% 46%;
+    --safety-warning: 38 92% 60%;
+    --safety-danger: 0 84% 70%;
+    --safety-info: 201 96% 42%;
+
+    --chart-primary: 141.8919 69.1589% 58.0392%;
+    --chart-secondary: 257.6687 100% 68.0392%;
+    --chart-tertiary: 0 93.5484% 81.7647%;
+    --chart-quaternary: 217.5484 87.5706% 65.2941%;
+
+    --sidebar-background: 240 4.3478% 9.0196%;
+    --sidebar-foreground: 0 0% 94.1176%;
+    --sidebar-primary: 257.6687 100% 68.0392%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 226.6667 9.6774% 18.2353%;
+    --sidebar-accent-foreground: 257.6687 100% 68.0392%;
+    --sidebar-border: 222.8571 6.422% 21.3725%;
+    --sidebar-ring: 257.6687 100% 68.0392%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    letter-spacing: var(--tracking-normal);
+  }
+}
+
+/* Shimmer Button Animations */
+@keyframes shimmer-slide {
+  to {
+    transform: translate(calc(100cqw - 100%), 0);
+  }
+}
+
+@keyframes spin-around {
+  0% {
+    transform: translateZ(0) rotate(0);
+  }
+  15%,
+  35% {
+    transform: translateZ(0) rotate(90deg);
+  }
+  65%,
+  85% {
+    transform: translateZ(0) rotate(270deg);
+  }
+  100% {
+    transform: translateZ(0) rotate(360deg);
+  }
+}
+
+.animate-shimmer-slide {
+  animation: shimmer-slide var(--speed) ease-in-out infinite alternate;
+}
+
+.animate-spin-around {
+  animation: spin-around calc(var(--speed) * 2) infinite linear;
+}
+
+/* Fog/Smog Drift Animations */
+@keyframes fog-drift-1 {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.3;
+  }
+  33% {
+    transform: translate(30px, -20px) scale(1.1);
+    opacity: 0.5;
+  }
+  66% {
+    transform: translate(-20px, 30px) scale(0.9);
+    opacity: 0.4;
+  }
+}
+
+@keyframes fog-drift-2 {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.2;
+  }
+  33% {
+    transform: translate(-40px, 25px) scale(1.15);
+    opacity: 0.4;
+  }
+  66% {
+    transform: translate(35px, -30px) scale(0.85);
+    opacity: 0.3;
+  }
+}
+
+@keyframes fog-drift-3 {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.25;
+  }
+  33% {
+    transform: translate(25px, 35px) scale(0.95);
+    opacity: 0.35;
+  }
+  66% {
+    transform: translate(-30px, -25px) scale(1.05);
+    opacity: 0.45;
+  }
+}
+
+.animate-fog-drift-1 {
+  animation: fog-drift-1 20s ease-in-out infinite;
+}
+
+.animate-fog-drift-2 {
+  animation: fog-drift-2 25s ease-in-out infinite;
+  animation-delay: 5s;
+}
+
+.animate-fog-drift-3 {
+  animation: fog-drift-3 30s ease-in-out infinite;
+  animation-delay: 10s;
+}
+
+/* Radial gradient utility */
+.bg-gradient-radial {
+  background-image: radial-gradient(circle, var(--tw-gradient-stops));
+}
+
+/* Marquee Animations */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-100% - var(--gap)));
+  }
+}
+
+@keyframes marquee-vertical {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(calc(-100% - var(--gap)));
+  }
+}
+
+.animate-marquee {
+  animation: marquee var(--duration) linear infinite;
+}
+
+.animate-marquee-vertical {
+  animation: marquee-vertical var(--duration) linear infinite;
+}
