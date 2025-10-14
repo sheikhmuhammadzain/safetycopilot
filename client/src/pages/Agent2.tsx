@@ -400,6 +400,7 @@
     const [currentStage, setCurrentStage] = useState("");
     const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
     const [finalAnswer, setFinalAnswer] = useState("");
+    const [currentSaved, setCurrentSaved] = useState(false);
     const [thinkingText, setThinkingText] = useState("");
     const [reasoningText, setReasoningText] = useState("");
     const [currentQuestion, setCurrentQuestion] = useState("");
@@ -518,7 +519,7 @@
             return prev;
           }
           
-          return [
+          const next = [
             ...prev,
             {
               id: messageId,
@@ -530,6 +531,9 @@
               timestamp: Date.now(),
             },
           ];
+          // Mark current as saved (hide live container)
+          setCurrentSaved(true);
+          return next;
         });
       }
     }, [isStreaming, currentQuestion, currentAnalysis, finalAnswer, toolCalls, response, currentDataset]);
@@ -604,7 +608,7 @@
           return prev;
         }
         
-        return [
+        const next = [
           ...prev,
           {
             id: messageId,
@@ -616,6 +620,9 @@
             timestamp: Date.now(),
           },
         ];
+        // Mark current as saved to hide the live user bubble
+        setCurrentSaved(true);
+        return next;
       });
     };
 
@@ -634,6 +641,7 @@
       setFinalAnswer("");
       setDebouncedAnalysis("");
       setToolCalls([]);
+      setCurrentSaved(false);
       setStreamEvents([]);
       setThinkingText("");
       setReasoningText("");
@@ -811,20 +819,7 @@
             receivedAnswerTokensRef.current = false;
             // Slight delay to allow React to flush state before closing
             setTimeout(() => ws.close(), 20);
-            
-            // Clear current message states after saving to prevent duplicate rendering
-            setTimeout(() => {
-              setCurrentQuestion("");
-              setCurrentAnalysis("");
-              setFinalAnswer("");
-              setDebouncedAnalysis("");
-              setToolCalls([]);
-              setResponse(null);
-              setThinkingText("");
-              setReasoningText("");
-              currentMessageIdRef.current = null;
-            }, 250);
-            
+            // Do not immediately clear UI state; hide live container only after auto-save
             // Do not auto-scroll on completion to keep the experience natural
           }
         } catch (error) {
@@ -1605,7 +1600,7 @@
               ))}
               
               {/* Current User Question */}
-              {currentQuestion && (
+              {currentQuestion && !currentSaved && (
                 <div className="flex justify-end">
                   <div className="bg-primary text-primary-foreground rounded-2xl px-5 py-3 max-w-2xl">
                     <p className="text-sm">{currentQuestion}</p>
@@ -1614,7 +1609,7 @@
               )}
 
               {/* Current Assistant Response Container */}
-              {(isStreaming || response || currentAnalysis || finalAnswer || toolCalls.length > 0 || thinkingText) && (
+              {(isStreaming || (!currentSaved && (response || currentAnalysis || finalAnswer || toolCalls.length > 0 || thinkingText))) && (
                 <div className="space-y-4">
                   {/* Thinking & Planning (live) - tools + reasoning */}
           {(reasoningText?.trim().length > 0 || toolCalls.length > 0) && (
