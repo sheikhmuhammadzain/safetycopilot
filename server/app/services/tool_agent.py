@@ -306,6 +306,17 @@ def execute_sql_query(
 
 def _safe_json_serialize(obj):
     """Convert pandas/numpy objects to JSON-serializable values (for dict values)."""
+    # Import datetime at the top to handle native Python datetime objects
+    from datetime import datetime, date, time
+    
+    # Handle native Python datetime objects
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, date):
+        return obj.isoformat()
+    if isinstance(obj, time):
+        return obj.isoformat()
+    
     # Handle Timestamp
     if isinstance(obj, pd.Timestamp):
         return obj.isoformat()
