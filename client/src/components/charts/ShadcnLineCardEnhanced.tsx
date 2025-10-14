@@ -84,15 +84,29 @@ export default function ShadcnLineCardEnhanced({
   };
 
   // Simple tooltip for hover
+  // Format date for better display
+  const formatDate = (dateStr: string) => {
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric' 
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
   const SimpleTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload || !payload.length) return null;
     return (
       <div className="bg-white border border-slate-200 rounded-lg shadow-lg p-2">
-        <p className="text-xs font-medium text-slate-900">{label}</p>
+        <p className="text-xs font-medium text-slate-900">{formatDate(label)}</p>
         <p className="text-xs text-slate-600">
           {payload[0].dataKey}: {payload[0].value}
         </p>
-        <p className="text-[10px] text-slate-400 mt-1">Click to see  details</p>
+        <p className="text-[10px] text-slate-400 mt-1">Click to see details</p>
       </div>
     );
   };
@@ -124,10 +138,21 @@ export default function ShadcnLineCardEnhanced({
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis
                     dataKey="label"
-                    tick={{ fill: "#64748b", fontSize: 11 }}
+                    tick={{ fill: "#64748b", fontSize: 10 }}
                     tickLine={{ stroke: "#cbd5e1" }}
                     axisLine={{ stroke: "#cbd5e1" }}
-                    minTickGap={24}
+                    angle={-45}
+                    textAnchor="end"
+                    height={60}
+                    tickFormatter={(value) => {
+                      // Format daily dates to MM/DD for better readability
+                      try {
+                        const date = new Date(value);
+                        return `${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getDate().toString().padStart(2, '0')}`;
+                      } catch {
+                        return value;
+                      }
+                    }}
                   />
                   <YAxis
                     tick={{ fill: "#64748b", fontSize: 11 }}

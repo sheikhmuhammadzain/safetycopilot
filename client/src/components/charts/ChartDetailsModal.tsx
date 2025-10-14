@@ -34,11 +34,18 @@ export function ChartDetailsModal({
 }: ChartDetailsModalProps) {
   if (!monthDetails) return null;
 
-  const formatMonthLabel = (month: string) => {
+  const formatDateLabel = (dateStr: string) => {
     try {
-      return format(parseISO(month + "-01"), "MMMM yyyy");
+      // Check if it's a daily date (YYYY-MM-DD) or monthly (YYYY-MM)
+      if (dateStr.split('-').length === 3) {
+        // Daily format: YYYY-MM-DD
+        return format(parseISO(dateStr), "MMMM d, yyyy");
+      } else {
+        // Monthly format: YYYY-MM
+        return format(parseISO(dateStr + "-01"), "MMMM yyyy");
+      }
     } catch {
-      return month;
+      return dateStr;
     }
   };
 
@@ -61,7 +68,7 @@ export function ChartDetailsModal({
               </div>
               <div>
                 <DialogTitle className="text-xl font-bold text-slate-900">
-                  {formatMonthLabel(monthDetails.month)}
+                  {formatDateLabel(monthDetails.month)}
                 </DialogTitle>
                 <p className="text-sm text-slate-600 mt-1">
                   {monthDetails.total_count} {datasetType === "incident" ? "Incidents" : "Hazards"} Reported

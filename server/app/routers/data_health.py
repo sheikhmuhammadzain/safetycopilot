@@ -12,11 +12,139 @@ from pathlib import Path
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
-from ..services.excel import get_incident_df, get_hazard_df, get_audit_df, get_inspection_df
+from ..services.excel import (
+    get_incident_df, get_hazard_df, get_audit_df, get_inspection_df,
+    load_default_sheets, get_dataset_selection_names
+)
 from ..services.json_utils import to_native_json
 
 
 router = APIRouter(prefix="/data-health", tags=["data-health"])
+
+
+# ======================= DATASET OVERVIEW =======================
+
+@router.get("/dataset-overview")
+async def get_dataset_overview(
+    sample_rows: int = Query(5, ge=1, le=20, description="Number of sample rows per sheet")
+):
+    """
+    Get complete overview of the Excel dataset including:
+    - All sheet names
+    - Column names for each sheet
+    - Data types for each column
+    - Record count for each sheet
+    - Sample rows (first N records) for each sheet
+    
+    This endpoint is useful for understanding the data structure and content.
+    
+    Query Parameters:
+        - sample_rows: Number of sample rows to return per sheet (1-20, default: 5)
+    
+    Returns:
+        - sheets: List of all sheets with their metadata
+        - total_sheets: Total number of sheets
+        - dataset_mapping: Which sheets are used for each dataset type
+        - file_info: Excel file information
+    """
+    # Load all sheets from Excel
+    sheets_dict = load_default_sheets()
+    dataset_mapping = get_dataset_selection_names()
+    
+    if not sheets_dict:
+        return JSONResponse(content={
+            "error": "No Excel data loaded",
+            "message": "Excel file not found or could not be read",
+            "sheets": [],
+            "total_sheets": 0
+        })
+    
+    # Build overview for each sheet
+    sheets_overview = []
+    
+    for sheet_name, df in sheets_dict.items():
+        if df is None or df.empty:
+            continue
+        
+        # Get column information
+        columns_info = []
+        for col in df.columns:
+            col_data = df[col]
+            dtype_str = str(col_data.dtype)
+            
+            # Calculate non-null percentage
+            non_null_count = col_data.notna().sum()
+            total_count = len(col_data)
+            completeness_pct = (non_null_count / total_count * 100) if total_count > 0 else 0
+            
+            # Get sample values (first 3 non-null)
+            sample_values = col_data.dropna().head(3).tolist()
+            
+            columns_info.append({
+                "name": str(col),
+                "dtype": dtype_str,
+                "non_null_count": int(non_null_count),
+                "null_count": int(total_count - non_null_count),
+                "completeness_percent": round(completeness_pct, 2),
+                "sample_values": [str(v) for v in sample_values]
+            })
+        
+        # Get sample rows
+        sample_df = df.head(sample_rows)
+        
+        # Convert sample to records (handle datetime columns)
+        sample_records = []
+        for idx, row in sample_df.iterrows():
+            record = {}
+            for col in df.columns:
+                val = row[col]
+                if pd.isna(val):
+                    record[str(col)] = None
+                elif isinstance(val, pd.Timestamp):
+                    record[str(col)] = val.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    record[str(col)] = str(val)
+            sample_records.append(record)
+        
+        # Determine which dataset this sheet is used for
+        used_for = []
+        for dataset_type, mapped_sheet in dataset_mapping.items():
+            if mapped_sheet == sheet_name:
+                used_for.append(dataset_type)
+        
+        sheet_overview = {
+            "sheet_name": sheet_name,
+            "total_rows": len(df),
+            "total_columns": len(df.columns),
+            "columns": columns_info,
+            "sample_rows": sample_records,
+            "used_for_datasets": used_for,
+            "memory_usage_mb": round(df.memory_usage(deep=True).sum() / 1024 / 1024, 2)
+        }
+        
+        sheets_overview.append(sheet_overview)
+    
+    # Get Excel file info
+    from ..services.excel import DEFAULT_EXCEL_PATH
+    file_info = {
+        "file_path": str(DEFAULT_EXCEL_PATH),
+        "file_exists": DEFAULT_EXCEL_PATH.exists(),
+    }
+    
+    if DEFAULT_EXCEL_PATH.exists():
+        file_stat = DEFAULT_EXCEL_PATH.stat()
+        file_info.update({
+            "file_size_mb": round(file_stat.st_size / 1024 / 1024, 2),
+            "last_modified": datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
+        })
+    
+    return JSONResponse(content=to_native_json({
+        "sheets": sheets_overview,
+        "total_sheets": len(sheets_overview),
+        "dataset_mapping": dataset_mapping,
+        "file_info": file_info,
+        "timestamp": datetime.now().isoformat()
+    }))
 
 
 # ======================= DATA HEALTH SUMMARY =======================
@@ -37,12 +165,20 @@ async def get_data_health_summary():
     aud_df = get_audit_df()
     insp_df = get_inspection_df()
     
-    # Count records
+    # Count records - use unique non-null IDs instead of total rows
+    def count_unique_ids(df, id_col):
+        """Count unique non-null values in ID column."""
+        if df is None or df.empty:
+            return 0
+        if id_col not in df.columns:
+            return 0
+        return int(df[id_col].dropna().nunique())
+    
     total_records = {
-        "incidents": len(inc_df) if inc_df is not None else 0,
-        "hazards": len(haz_df) if haz_df is not None else 0,
-        "audits": len(aud_df) if aud_df is not None else 0,
-        "inspections": len(insp_df) if insp_df is not None else 0,
+        "incidents": count_unique_ids(inc_df, "Incident Number"),
+        "hazards": count_unique_ids(haz_df, "Incident Number"),
+        "audits": count_unique_ids(aud_df, "Audit Number"),
+        "inspections": count_unique_ids(insp_df, "Audit Number"),
     }
     
     # Get date ranges
@@ -460,11 +596,20 @@ async def get_all_counts():
     aud_df = get_audit_df()
     insp_df = get_inspection_df()
 
+    # Helper to count unique non-null IDs
+    def count_unique_ids(df, id_col):
+        """Count unique non-null values in ID column."""
+        if df is None or df.empty:
+            return 0
+        if id_col not in df.columns:
+            return 0
+        return int(df[id_col].dropna().nunique())
+    
     counts = {
-        "incident": int(len(inc_df)) if inc_df is not None else 0,
-        "hazard": int(len(haz_df)) if haz_df is not None else 0,
-        "audit": int(len(aud_df)) if aud_df is not None else 0,
-        "inspection": int(len(insp_df)) if insp_df is not None else 0,
+        "incident": count_unique_ids(inc_df, "Incident Number"),
+        "hazard": count_unique_ids(haz_df, "Incident Number"),
+        "audit": count_unique_ids(aud_df, "Audit Number"),
+        "inspection": count_unique_ids(insp_df, "Audit Number"),
     }
 
     # Findings via sheet name tokens
@@ -503,8 +648,8 @@ async def get_all_counts():
     insp_find_df = sheets.get(insp_find_name) if insp_find_name else None
 
     counts.update({
-        "audit_findings": int(len(aud_find_df)) if aud_find_df is not None else 0,
-        "inspection_findings": int(len(insp_find_df)) if insp_find_df is not None else 0,
+        "audit_findings": count_unique_ids(aud_find_df, "Audit Number"),
+        "inspection_findings": count_unique_ids(insp_find_df, "Audit Number"),
     })
 
     selected_sheet_names.update({

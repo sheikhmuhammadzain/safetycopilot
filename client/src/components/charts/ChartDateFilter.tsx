@@ -1,11 +1,12 @@
-import { useState } from "react";
-import { Calendar as CalendarIcon, X } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Calendar as CalendarIcon, X, AlertCircle } from "lucide-react";
 import { format, parse, isValid } from "date-fns";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 
 interface ChartDateFilterProps {
   startDate?: Date;
@@ -22,12 +23,35 @@ export function ChartDateFilter({
   onEndDateChange,
   onClear,
 }: ChartDateFilterProps) {
+  const { toast } = useToast();
   const [startOpen, setStartOpen] = useState(false);
   const [endOpen, setEndOpen] = useState(false);
   const [startInputValue, setStartInputValue] = useState("");
   const [endInputValue, setEndInputValue] = useState("");
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const hasFilters = startDate || endDate;
+
+  // Clear validation error when dates change
+  useEffect(() => {
+    setValidationError(null);
+  }, [startDate, endDate]);
+
+  // Validate date range
+  const validateDateRange = (newStart: Date | undefined, newEnd: Date | undefined): boolean => {
+    if (newStart && newEnd && newStart > newEnd) {
+      const errorMsg = "Start date cannot be after end date";
+      setValidationError(errorMsg);
+      toast({
+        title: "Invalid Date Range",
+        description: errorMsg,
+        variant: "destructive",
+      });
+      return false;
+    }
+    setValidationError(null);
+    return true;
+  };
 
   // Handle manual date input
   const handleStartInputChange = (value: string) => {
@@ -35,7 +59,9 @@ export function ChartDateFilter({
     // Try to parse mm/dd/yyyy format
     const parsed = parse(value, "MM/dd/yyyy", new Date());
     if (isValid(parsed)) {
-      onStartDateChange(parsed);
+      if (validateDateRange(parsed, endDate)) {
+        onStartDateChange(parsed);
+      }
     }
   };
 
@@ -44,7 +70,9 @@ export function ChartDateFilter({
     // Try to parse mm/dd/yyyy format
     const parsed = parse(value, "MM/dd/yyyy", new Date());
     if (isValid(parsed)) {
-      onEndDateChange(parsed);
+      if (validateDateRange(startDate, parsed)) {
+        onEndDateChange(parsed);
+      }
     }
   };
 
@@ -77,14 +105,18 @@ export function ChartDateFilter({
               mode="single"
               selected={startDate}
               onSelect={(date) => {
-                onStartDateChange(date);
-                setStartInputValue("");
-                setStartOpen(false);
+                if (validateDateRange(date, endDate)) {
+                  onStartDateChange(date);
+                  setStartInputValue("");
+                  setStartOpen(false);
+                }
               }}
               captionLayout="dropdown"
               fromYear={2020}
               toYear={2030}
+              defaultMonth={startDate || new Date()}
               initialFocus
+              disabled={(date) => endDate ? date > endDate : false}
             />
             <div className="flex items-center justify-between border-t px-3 py-2">
               <Button
@@ -143,13 +175,16 @@ export function ChartDateFilter({
               mode="single"
               selected={endDate}
               onSelect={(date) => {
-                onEndDateChange(date);
-                setEndInputValue("");
-                setEndOpen(false);
+                if (validateDateRange(startDate, date)) {
+                  onEndDateChange(date);
+                  setEndInputValue("");
+                  setEndOpen(false);
+                }
               }}
               captionLayout="dropdown"
               fromYear={2020}
               toYear={2030}
+              defaultMonth={endDate || startDate || new Date()}
               initialFocus
               disabled={(date) => startDate ? date < startDate : false}
             />
@@ -192,12 +227,21 @@ export function ChartDateFilter({
             onClear();
             setStartInputValue("");
             setEndInputValue("");
+            setValidationError(null);
           }}
           className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground mt-5"
         >
           <X className="h-3 w-3 mr-1" />
           Clear All
         </Button>
+      )}
+
+      {/* Validation Error Message */}
+      {validationError && (
+        <div className="flex items-center gap-2 text-xs text-destructive mt-5">
+          <AlertCircle className="h-3 w-3" />
+          <span>{validationError}</span>
+        </div>
       )}
     </div>
   );

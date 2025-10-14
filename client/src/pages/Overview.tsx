@@ -5,6 +5,7 @@ import { useCachedGet } from "@/hooks/useCachedGet";
 import ShadcnLineCard from "@/components/charts/ShadcnLineCard";
 import ShadcnLineCardEnhanced from "@/components/charts/ShadcnLineCardEnhanced";
 import ShadcnBarCard from "@/components/charts/ShadcnBarCard";
+import { StackedBarCard } from "@/components/charts/StackedBarCard";
 import ShadcnParetoCard from "@/components/charts/ShadcnParetoCard";
 import ShadcnHeatmapCard from "@/components/charts/ShadcnHeatmapCard";
 import { ChartDateFilter } from "@/components/charts/ChartDateFilter";
@@ -47,10 +48,6 @@ export default function Overview() {
   const [incidentsEndDate, setIncidentsEndDate] = useState<Date | undefined>();
   const [locations, setLocations] = useState<string[]>([]);
   const [sublocations, setSublocations] = useState<string[]>([]);
-  const [minSeverity, setMinSeverity] = useState<string>("");
-  const [maxSeverity, setMaxSeverity] = useState<string>("");
-  const [minRisk, setMinRisk] = useState<string>("");
-  const [maxRisk, setMaxRisk] = useState<string>("");
   const [statuses, setStatuses] = useState<string[]>([]);
   const [incidentTypes, setIncidentTypes] = useState<string[]>([]);
   const [violationTypes, setViolationTypes] = useState<string[]>([]);
@@ -170,15 +167,11 @@ export default function Overview() {
     if (departments.length > 0) params.departments = departments;
     if (locations.length > 0) params.locations = locations;
     if (sublocations.length > 0) params.sublocations = sublocations;
-    if (minSeverity) params.min_severity = parseFloat(minSeverity);
-    if (maxSeverity) params.max_severity = parseFloat(maxSeverity);
-    if (minRisk) params.min_risk = parseFloat(minRisk);
-    if (maxRisk) params.max_risk = parseFloat(maxRisk);
     if (statuses.length > 0) params.statuses = statuses;
     if (incidentTypes.length > 0) params.incident_types = incidentTypes;
     if (violationTypes.length > 0) params.violation_types = violationTypes;
     return params;
-  }, [startDate, endDate, departments, locations, sublocations, minSeverity, maxSeverity, minRisk, maxRisk, statuses, incidentTypes, violationTypes]);
+  }, [startDate, endDate, departments, locations, sublocations, statuses, incidentTypes, violationTypes]);
 
   // Hazards chart params (per-chart filters override global filters)
   const hazardsParams = useMemo(() => {
@@ -207,10 +200,6 @@ export default function Overview() {
     setDepartments([]);
     setLocations([]);
     setSublocations([]);
-    setMinSeverity("");
-    setMaxSeverity("");
-    setMinRisk("");
-    setMaxRisk("");
     setStatuses([]);
     setIncidentTypes([]);
     setViolationTypes([]);
@@ -400,64 +389,6 @@ export default function Overview() {
                     selected={sublocations}
                     onChange={setSublocations}
                     placeholder="Select sublocations..."
-                  />
-                </div>
-
-                {/* Severity Range */}
-                <div className="space-y-2">
-                  <Label htmlFor="min-severity">Min Severity (0-5)</Label>
-                  <Input
-                    id="min-severity"
-                    type="number"
-                    min="0"
-                    max="5"
-                    step="0.1"
-                    value={minSeverity}
-                    onChange={(e) => setMinSeverity(e.target.value)}
-                    placeholder="0.0"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="max-severity">Max Severity (0-5)</Label>
-                  <Input
-                    id="max-severity"
-                    type="number"
-                    min="0"
-                    max="5"
-                    step="0.1"
-                    value={maxSeverity}
-                    onChange={(e) => setMaxSeverity(e.target.value)}
-                    placeholder="5.0"
-                  />
-                </div>
-
-                {/* Risk Range */}
-                <div className="space-y-2">
-                  <Label htmlFor="min-risk">Min Risk (0-5)</Label>
-                  <Input
-                    id="min-risk"
-                    type="number"
-                    min="0"
-                    max="5"
-                    step="0.1"
-                    value={minRisk}
-                    onChange={(e) => setMinRisk(e.target.value)}
-                    placeholder="0.0"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="max-risk">Max Risk (0-5)</Label>
-                  <Input
-                    id="max-risk"
-                    type="number"
-                    min="0"
-                    max="5"
-                    step="0.1"
-                    value={maxRisk}
-                    onChange={(e) => setMaxRisk(e.target.value)}
-                    placeholder="5.0"
                   />
                 </div>
 
@@ -827,14 +758,14 @@ export default function Overview() {
                   </TooltipTrigger>
                   <TooltipContent side="left" className="max-w-sm">
                     <p className="font-semibold mb-2">Hazards Trend</p>
-                    <p className="text-sm mb-2">Shows the number of hazards identified each month over time.</p>
+                    <p className="text-sm mb-2">Shows the number of hazards identified each day over time.</p>
                     <p className="text-sm font-mono bg-muted p-2 rounded mb-2">
-                      Count = Total Hazards Identified per Month
+                      Count = Total Hazards Identified per Day
                     </p>
                     <ul className="text-xs space-y-1">
                       <li>• <strong>Rising trend:</strong> More hazards being identified (could indicate better reporting)</li>
                       <li>• <strong>Falling trend:</strong> Fewer hazards (could indicate improved conditions or underreporting)</li>
-                      <li>• <strong>Use case:</strong> Track proactive hazard identification efforts</li>
+                      <li>• <strong>Use case:</strong> Track proactive hazard identification efforts with daily resolution</li>
                     </ul>
                   </TooltipContent>
                 </Tooltip>
@@ -873,14 +804,14 @@ export default function Overview() {
                   </TooltipTrigger>
                   <TooltipContent side="left" className="max-w-sm">
                     <p className="font-semibold mb-2">Incidents Trend</p>
-                    <p className="text-sm mb-2">Displays the total number of incidents reported each month.</p>
+                    <p className="text-sm mb-2">Displays the total number of incidents reported each day.</p>
                     <p className="text-sm font-mono bg-muted p-2 rounded mb-2">
-                      Count = Total Incidents per Month
+                      Count = Total Incidents per Day
                     </p>
                     <ul className="text-xs space-y-1">
-                      <li>• <strong>Peaks:</strong> Months with higher incident counts (investigate causes)</li>
-                      <li>• <strong>Valleys:</strong> Months with fewer incidents (positive trend)</li>
-                      <li>• <strong>Use case:</strong> Monitor reactive safety performance over time</li>
+                      <li>• <strong>Peaks:</strong> Days with higher incident counts (investigate causes)</li>
+                      <li>• <strong>Valleys:</strong> Days with fewer incidents (positive trend)</li>
+                      <li>• <strong>Use case:</strong> Monitor reactive safety performance with daily resolution</li>
                     </ul>
                   </TooltipContent>
                 </Tooltip>
@@ -890,7 +821,13 @@ export default function Overview() {
 
           {/* Root Cause Pareto */}
           <div className="lg:col-span-12 relative">
-            <ShadcnParetoCard title="Root Cause Pareto" endpoint="/analytics/data/root-cause-pareto" params={{ dataset: "incident", ...filterParams }} refreshKey={refreshKey} />
+            <ShadcnParetoCard 
+              title="Root Cause Pareto" 
+              endpoint="/analytics/data/root-cause-pareto" 
+              params={{ dataset: "incident", ...filterParams }} 
+              refreshKey={refreshKey}
+              showIncidentTypeFilter={true}
+            />
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -916,7 +853,7 @@ export default function Overview() {
 
           {/* Top Findings Section */}
           <div className="lg:col-span-12 relative">
-            <ShadcnBarCard title="Top Hazard Findings" endpoint="/analytics/data/hazard-top-findings" params={filterParams} refreshKey={refreshKey} />
+            <ShadcnBarCard title="Hazards by Incident Type Category" endpoint="/analytics/data/hazard-top-findings" params={{ dataset: "hazard", ...filterParams }} refreshKey={refreshKey} />
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -925,15 +862,16 @@ export default function Overview() {
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="left" className="max-w-sm">
-                  <p className="font-semibold mb-2">Top Hazard Findings</p>
-                  <p className="text-sm mb-2">Shows the most frequently identified hazard descriptions and violation types.</p>
+                  <p className="font-semibold mb-2">Hazards by Incident Type Category</p>
+                  <p className="text-sm mb-2">Breakdown of hazards grouped by incident type categories such as 'No Loss / No Injury', 'Site HSE Rules', 'Injury', etc.</p>
                   <p className="text-sm font-mono bg-muted p-2 rounded mb-2">
-                    Count = Number of Similar Hazards Identified
+                    Count = Total Hazards per Incident Type
                   </p>
                   <ul className="text-xs space-y-1">
-                    <li>• <strong>Data source:</strong> Hazard descriptions and violation types</li>
-                    <li>• <strong>Top findings:</strong> Most common hazardous conditions</li>
-                    <li>• <strong>Use case:</strong> Focus on controlling recurring hazards</li>
+                    <li>• <strong>Data source:</strong> Incident Type(s) column from Hazard ID sheet</li>
+                    <li>• <strong>Categories:</strong> Single types (e.g., 'Injury') or combined (e.g., 'Injury; Site HSE Rules')</li>
+                    <li>• <strong>Top categories:</strong> Most frequently assigned incident types</li>
+                    <li>• <strong>Use case:</strong> Understand hazard distribution across incident type classifications</li>
                   </ul>
                 </TooltipContent>
               </Tooltip>
@@ -941,7 +879,13 @@ export default function Overview() {
           </div>
 
           <div className="lg:col-span-12 relative">
-            <ShadcnBarCard title="Top Incident Findings" endpoint="/analytics/data/incident-top-findings" params={filterParams} refreshKey={refreshKey} />
+            <StackedBarCard 
+              title="Incidents by Type and Severity" 
+              endpoint="/analytics/data/incident-top-findings" 
+              params={{ dataset: "incident", ...filterParams }} 
+              refreshKey={refreshKey}
+              height={500}
+            />
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -950,15 +894,16 @@ export default function Overview() {
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="left" className="max-w-sm">
-                  <p className="font-semibold mb-2">Top Incident Findings</p>
-                  <p className="text-sm mb-2">Displays the most common incident descriptions, conclusions, and root causes.</p>
+                  <p className="font-semibold mb-2">Incidents by Type and Severity</p>
+                  <p className="text-sm mb-2">Stacked bar chart showing incident types with severity level breakdown (C0-C5).</p>
                   <p className="text-sm font-mono bg-muted p-2 rounded mb-2">
-                    Count = Number of Similar Incidents
+                    Stacked bars = Severity distribution per incident type
                   </p>
                   <ul className="text-xs space-y-1">
-                    <li>• <strong>Data source:</strong> Incident descriptions and conclusions</li>
-                    <li>• <strong>Top findings:</strong> Most recurring incident types or causes</li>
-                    <li>• <strong>Use case:</strong> Target preventive measures for common incidents</li>
+                    <li>• <strong>Data source:</strong> Incident Type(s) + Worst Case Consequence</li>
+                    <li>• <strong>Severity levels:</strong> C0 (No Ill Effect) to C5 (Catastrophic)</li>
+                    <li>• <strong>Colors:</strong> Green (C0) → Dark Red (C5)</li>
+                    <li>• <strong>Use case:</strong> Identify high-severity incident types for prioritization</li>
                   </ul>
                 </TooltipContent>
               </Tooltip>
@@ -966,7 +911,7 @@ export default function Overview() {
           </div>
 
           <div className="lg:col-span-12 relative">
-            <ShadcnBarCard title="Top Audit Findings" endpoint="/analytics/data/audit-top-findings" params={filterParams} refreshKey={refreshKey} />
+<ShadcnBarCard title="Monthly Audit Volume & Closures" endpoint="/analytics/data/audit-monthly-volume" params={{ dataset: "audit", ...filterParams }} preserveOrder={true} maxCategories={200} refreshKey={refreshKey} />
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -975,15 +920,15 @@ export default function Overview() {
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="left" className="max-w-sm">
-                  <p className="font-semibold mb-2">Top Audit Findings</p>
-                  <p className="text-sm mb-2">Shows the most frequently identified findings from safety audits.</p>
+<p className="font-semibold mb-2">Monthly Audit Volume & Closures</p>
+                  <p className="text-sm mb-2">Counts audits initiated and audits closed per month (deduplicated by Audit Number).</p>
                   <p className="text-sm font-mono bg-muted p-2 rounded mb-2">
-                    Count = Number of Times Finding Was Identified
+                    Initiated = earliest Start Date per Audit • Closed = latest Entered Closed per Audit
                   </p>
                   <ul className="text-xs space-y-1">
-                    <li>• <strong>Data source:</strong> Audit findings from formal assessments</li>
-                    <li>• <strong>Top findings:</strong> Most common nonconformities or issues</li>
-                    <li>• <strong>Use case:</strong> Identify systemic gaps and compliance issues</li>
+                    <li>• <strong>Data source:</strong> Audit sheet (deduplicated by Audit Number)</li>
+                    <li>• <strong>Initiated month:</strong> from Start Date/Scheduled Date</li>
+                    <li>• <strong>Closed month:</strong> from Entered Closed/Completion/End Date</li>
                   </ul>
                 </TooltipContent>
               </Tooltip>
@@ -991,7 +936,7 @@ export default function Overview() {
           </div>
 
           <div className="lg:col-span-12 relative">
-            <ShadcnBarCard title="Top Inspection Findings" endpoint="/analytics/data/inspection-top-findings" params={filterParams} refreshKey={refreshKey} />
+            <ShadcnBarCard title="Top Inspection Findings" endpoint="/analytics/data/inspection-top-findings" params={{ dataset: "inspection", ...filterParams }} refreshKey={refreshKey} />
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>

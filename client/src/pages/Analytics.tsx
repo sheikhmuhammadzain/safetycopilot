@@ -61,7 +61,7 @@ export default function Analytics() {
   // Fetch filter options
   const fetchFilterOptions = async () => {
     try {
-      const response = await axios.get(`${API_BASE}/filters/all`);
+      const response = await axios.get(`${API_BASE}/filters/all-filters`);
       setFilterOptions(response.data);
       console.log("Filter options loaded:", response.data);
     } catch (error) {

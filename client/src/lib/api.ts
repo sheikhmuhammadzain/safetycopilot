@@ -333,8 +333,10 @@ export type RecentItem = {
   severity: number | null;
 };
 
+// Note: Despite the name "MonthDetailedData", this type now supports daily granularity.
+// The "month" field contains date strings in YYYY-MM-DD format (daily) or YYYY-MM format (monthly).
 export type MonthDetailedData = {
-  month: string;
+  month: string;  // Date string: YYYY-MM-DD (daily) or YYYY-MM (monthly)
   total_count: number;
   departments: CountItem[];
   types: CountItem[];

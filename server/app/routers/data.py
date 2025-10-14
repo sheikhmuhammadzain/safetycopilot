@@ -73,6 +73,73 @@ def _score_to_bucket(val: Any, *, kind: str = "severity") -> str:
 
 # ---------- Endpoints ----------
 
+@router.get("/incidents/recent")
+async def list_recent_incidents(limit: int = 5) -> List[Dict[str, Any]]:
+    """Return the most recent incidents based on Date of Occurrence.
+    Falls back to Date Reported or Date Entered if occurrence date is missing.
+    """
+    df = get_incident_df()
+    if df is None or df.empty:
+        return []
+    
+    # Try to find the best date column for sorting
+    date_col = None
+    for candidate in ["Date of Occurrence", "occurrence_date", "Date Reported", "Date Entered", "date_reported", "date_entered"]:
+        if candidate in df.columns:
+            date_col = candidate
+            break
+    
+    if date_col is None:
+        # No date column found, return first N rows
+        df_sorted = df.head(limit)
+    else:
+        # Convert to datetime and sort descending
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+        # Remove rows with null dates and sort
+        df_sorted = df[df[date_col].notna()].sort_values(by=date_col, ascending=False).head(limit)
+    
+    # Extract relevant columns
+    id_s = _first_existing(df_sorted, [
+        "Incident Number", "incident_id", "id", "Incident ID", "INCIDENT_ID", "IncidentID",
+    ])
+    if id_s is None:
+        id_s = pd.Series([f"INC-{i+1:03d}" for i in range(len(df_sorted))])
+    
+    title_s = _first_existing(df_sorted, [
+        "Title", "title", "incident_title", "description", "Description", "short_description",
+    ])
+    
+    dept_s = _first_existing(df_sorted, [
+        "Department", "department", "dept",
+    ])
+    
+    status_s = _first_existing(df_sorted, [
+        "Status", "status", "incident_status", "workflow_status",
+    ])
+    
+    date_s = _first_existing(df_sorted, [
+        "Date of Occurrence", "occurrence_date", "Date Reported", "date_reported", "Date Entered", "created_date",
+    ])
+    
+    # Build output
+    ids = _ensure_str_list(id_s)
+    titles = _ensure_str_list(title_s)
+    depts = _ensure_str_list(dept_s)
+    statuses = _ensure_str_list(status_s)
+    dates = _coerce_date_str(date_s)
+    
+    out: List[Dict[str, Any]] = []
+    for i in range(len(df_sorted)):
+        out.append({
+            "id": ids[i] if i < len(ids) else f"INC-{i+1:03d}",
+            "title": titles[i] if i < len(titles) and titles[i] else f"Incident {ids[i] if i < len(ids) else i+1}",
+            "department": depts[i] if i < len(depts) else "",
+            "status": statuses[i] if i < len(statuses) and statuses[i] else "CLOSED",
+            "date": dates[i] if i < len(dates) else "",
+        })
+    return out
+
+
 @router.get("/incidents")
 async def list_incidents() -> List[Dict[str, Any]]:
     df = get_incident_df()
@@ -135,6 +202,51 @@ async def list_incidents() -> List[Dict[str, Any]]:
     return out
 
 
+@router.get("/hazards/recent")
+async def list_recent_hazards(limit: int = 5) -> List[Dict[str, Any]]:
+    """Return the most recent hazards based on date entered/reported."""
+    df = get_hazard_df()
+    if df is None or df.empty:
+        return []
+    
+    # Try to find the best date column for sorting
+    date_col = None
+    for candidate in ["Date Entered", "date_entered", "Date Reported", "date_reported", "occurrence_date", "created_date"]:
+        if candidate in df.columns:
+            date_col = candidate
+            break
+    
+    if date_col is None:
+        df_sorted = df.head(limit)
+    else:
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+        df_sorted = df[df[date_col].notna()].sort_values(by=date_col, ascending=False).head(limit)
+    
+    # Extract relevant columns
+    id_s = _first_existing(df_sorted, ["hazard_id", "id", "HAZARD_ID", "Hazard ID"])
+    if id_s is None:
+        id_s = pd.Series([f"HAZ-{i+1:03d}" for i in range(len(df_sorted))])
+    
+    title_s = _first_existing(df_sorted, ["Title", "title", "hazard_title", "description", "Description"])
+    status_s = _first_existing(df_sorted, ["Status", "status", "hazard_status", "workflow_status"])
+    date_s = _first_existing(df_sorted, ["Date Entered", "date_entered", "Date Reported", "date_reported", "occurrence_date"])
+    
+    ids = _ensure_str_list(id_s)
+    titles = _ensure_str_list(title_s)
+    statuses = _ensure_str_list(status_s)
+    dates = _coerce_date_str(date_s)
+    
+    out: List[Dict[str, Any]] = []
+    for i in range(len(df_sorted)):
+        out.append({
+            "id": ids[i] if i < len(ids) else f"HAZ-{i+1:03d}",
+            "title": titles[i] if i < len(titles) and titles[i] else f"Hazard {ids[i] if i < len(ids) else i+1}",
+            "status": statuses[i] if i < len(statuses) and statuses[i] else "IDENTIFIED",
+            "date": dates[i] if i < len(dates) else "",
+        })
+    return out
+
+
 @router.get("/hazards")
 async def list_hazards() -> List[Dict[str, Any]]:
     df = get_hazard_df()
@@ -177,6 +289,51 @@ async def list_hazards() -> List[Dict[str, Any]]:
             "date": dates[i] if i < len(dates) else "",
             "location": locations[i] if i < len(locations) else "",
             "violationType": violations[i] if i < len(violations) else "",
+        })
+    return out
+
+
+@router.get("/audits/recent")
+async def list_recent_audits(limit: int = 5) -> List[Dict[str, Any]]:
+    """Return the most recent audits based on scheduled date or start date."""
+    df = get_audit_df()
+    if df is None or df.empty:
+        return []
+    
+    # Try to find the best date column for sorting
+    date_col = None
+    for candidate in ["scheduled_date", "Scheduled Date", "start_date", "Start Date", "date"]:
+        if candidate in df.columns:
+            date_col = candidate
+            break
+    
+    if date_col is None:
+        df_sorted = df.head(limit)
+    else:
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+        df_sorted = df[df[date_col].notna()].sort_values(by=date_col, ascending=False).head(limit)
+    
+    # Extract relevant columns
+    id_s = _first_existing(df_sorted, ["audit_id", "id", "AUDIT_ID", "Audit ID"])
+    if id_s is None:
+        id_s = pd.Series([f"AUD-{i+1:03d}" for i in range(len(df_sorted))])
+    
+    title_s = _first_existing(df_sorted, ["title", "audit_title", "Title"])
+    status_s = _first_existing(df_sorted, ["audit_status", "status", "Status"])
+    date_s = _first_existing(df_sorted, ["scheduled_date", "start_date", "Scheduled Date", "Start Date"])
+    
+    ids = _ensure_str_list(id_s)
+    titles = _ensure_str_list(title_s)
+    statuses = _ensure_str_list(status_s)
+    dates = _coerce_date_str(date_s)
+    
+    out: List[Dict[str, Any]] = []
+    for i in range(len(df_sorted)):
+        out.append({
+            "id": ids[i] if i < len(ids) else f"AUD-{i+1:03d}",
+            "title": titles[i] if i < len(titles) and titles[i] else f"Audit {ids[i] if i < len(ids) else i+1}",
+            "status": statuses[i] if i < len(statuses) and statuses[i] else "SCHEDULED",
+            "date": dates[i] if i < len(dates) else "",
         })
     return out
 
@@ -405,8 +562,8 @@ async def recent_incidents(limit: int = 5) -> List[Dict[str, Any]]:
     ])
     if date_col is not None:
         try:
-            cp["__dt"] = pd.to_datetime(date_col, errors="coerce")
-            cp = cp.sort_values("__dt", ascending=False)
+            cp["__dt"] = pd.to_datetime(cp[date_col], errors="coerce")
+            cp = cp.sort_values("__dt", ascending=False).reset_index(drop=True)
         except Exception:
             pass
     # Map fields
@@ -459,8 +616,8 @@ async def recent_hazards(limit: int = 5) -> List[Dict[str, Any]]:
     date_col = _first_existing(cp, ["occurrence_date", "date", "entered_date", "reported_date"])
     if date_col is not None:
         try:
-            cp["__dt"] = pd.to_datetime(date_col, errors="coerce")
-            cp = cp.sort_values("__dt", ascending=False)
+            cp["__dt"] = pd.to_datetime(cp[date_col], errors="coerce")
+            cp = cp.sort_values("__dt", ascending=False).reset_index(drop=True)
         except Exception:
             pass
     id_s = _first_existing(cp, ["hazard_id", "id", "HAZARD_ID"])
@@ -512,8 +669,8 @@ async def recent_audits(limit: int = 5) -> List[Dict[str, Any]]:
     date_col = _first_existing(cp, ["scheduled_date", "start_date", "completion_date", "end_date"])  # prefer start
     if date_col is not None:
         try:
-            cp["__dt"] = pd.to_datetime(date_col, errors="coerce")
-            cp = cp.sort_values("__dt", ascending=False)
+            cp["__dt"] = pd.to_datetime(cp[date_col], errors="coerce")
+            cp = cp.sort_values("__dt", ascending=False).reset_index(drop=True)
         except Exception:
             pass
 

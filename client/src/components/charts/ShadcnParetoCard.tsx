@@ -1,13 +1,24 @@
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useCachedGet } from "@/hooks/useCachedGet";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, ChartLegend, ChartLegendContent } from "@/components/ui/chart";
 import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Bar, Line } from "recharts";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Badge } from "@/components/ui/badge";
 
 type ParetoResponse = {
   labels: string[];
   bars: number[];
   cum_pct: number[]; // 0..100
+  incident_type?: string;
+  total_count?: number;
+};
+
+type IncidentTypeOption = {
+  label: string;
+  value: string;
+  count: number;
 };
 
 export default function ShadcnParetoCard({
@@ -16,14 +27,34 @@ export default function ShadcnParetoCard({
   params,
   height = 260,
   refreshKey,
+  showIncidentTypeFilter = false,
 }: {
   title: string;
   endpoint: string;
   params?: Record<string, any>;
   height?: number;
   refreshKey?: number;
+  showIncidentTypeFilter?: boolean;
 }) {
-  const { data, error, loading } = useCachedGet<ParetoResponse>(endpoint, params, undefined, refreshKey);
+  const [selectedIncidentType, setSelectedIncidentType] = useState<string>("All");
+  
+  // Fetch incident types for radio buttons (if enabled)
+  const { data: incidentTypesData } = useCachedGet<{ incident_types: IncidentTypeOption[] }>(
+    showIncidentTypeFilter ? `${endpoint}/incident-types` : "",
+    params,
+    undefined,
+    refreshKey
+  );
+  
+  // Build params with selected incident type
+  const chartParams = useMemo(() => {
+    if (!showIncidentTypeFilter || selectedIncidentType === "All") {
+      return params;
+    }
+    return { ...params, incident_type: selectedIncidentType };
+  }, [params, selectedIncidentType, showIncidentTypeFilter]);
+  
+  const { data, error, loading } = useCachedGet<ParetoResponse>(endpoint, chartParams, undefined, refreshKey);
 
   const rows = useMemo(() => {
     if (!data) return [] as any[];
@@ -43,9 +74,37 @@ export default function ShadcnParetoCard({
   return (
     <Card className="w-full border border-slate-200 bg-white shadow-sm">
       <CardHeader>
-        <CardTitle className="text-base font-semibold text-slate-900">{title}</CardTitle>
+        <div className="flex items-start justify-between">
+          <CardTitle className="text-base font-semibold text-slate-900">{title}</CardTitle>
+          {data?.total_count !== undefined && (
+            <Badge variant="secondary" className="ml-2">
+              {data.total_count} total
+            </Badge>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
+        {/* Incident Type Filter */}
+        {showIncidentTypeFilter && incidentTypesData?.incident_types && (
+          <div className="mb-4 p-3 bg-slate-50 rounded-lg border border-slate-200">
+            <Label className="text-sm font-medium mb-2 block">Filter by Incident Type</Label>
+            <RadioGroup value={selectedIncidentType} onValueChange={setSelectedIncidentType}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {incidentTypesData.incident_types.slice(0, 10).map((option) => (
+                  <div key={option.value} className="flex items-center space-x-2">
+                    <RadioGroupItem value={option.value} id={`type-${option.value}`} />
+                    <Label 
+                      htmlFor={`type-${option.value}`} 
+                      className="text-sm cursor-pointer flex-1"
+                    >
+                      {option.label} <span className="text-muted-foreground">({option.count})</span>
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            </RadioGroup>
+          </div>
+        )}
         {loading && <div className="text-xs text-slate-500">Loading…</div>}
         {error && <div className="text-xs text-red-600">{error}</div>}
         {!loading && !error && rows.length > 0 && (

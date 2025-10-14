@@ -56,9 +56,22 @@ def _resolve_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     return None
 
 
-def _to_month_period(series: pd.Series) -> pd.Series:
+def _to_date_period(series: pd.Series, granularity: str = 'D') -> pd.Series:
+    """
+    Convert datetime series to period strings.
+    
+    Args:
+        series: Pandas series with datetime values
+        granularity: 'D' for daily (YYYY-MM-DD), 'M' for monthly (YYYY-MM)
+    
+    Returns:
+        Series with period strings
+    """
     dt = pd.to_datetime(series, errors='coerce')
-    return dt.dt.to_period('M').astype(str)
+    if granularity == 'M':
+        return dt.dt.to_period('M').astype(str)
+    else:  # Daily by default
+        return dt.dt.date.astype(str)
 
 
 @router.get("/hse-scorecard", response_model=PlotlyFigureResponse)
@@ -201,8 +214,8 @@ async def data_incident_trend(
     if df is None or df.empty:
         return JSONResponse(content={"labels": [], "series": []})
     date_col = _resolve_column(df, ["occurrence_date", "date of occurrence", "date reported", "date entered"]) or df.columns[0]
-    months = _to_month_period(df[date_col])
-    counts = months.value_counts().sort_index()
+    dates = _to_date_period(df[date_col], granularity='D')  # Daily granularity
+    counts = dates.value_counts().sort_index()
     return JSONResponse(content={
         "labels": counts.index.tolist(),
         "series": [{"name": "Count", "data": counts.values.astype(int).tolist()}],
@@ -229,9 +242,9 @@ async def data_incident_trend_detailed(
     Enhanced endpoint that returns trend data WITH detailed breakdowns for tooltips.
     
     Returns:
-    - labels: Month labels (YYYY-MM format)
-    - series: Chart data (counts per month)
-    - details: Detailed breakdown per month including:
+    - labels: Date labels (YYYY-MM-DD format)
+    - series: Chart data (counts per day)
+    - details: Detailed breakdown per day including:
         - Top departments with counts
         - Top incident/violation types with counts
         - Severity and risk statistics
@@ -276,25 +289,25 @@ async def data_incident_trend_detailed(
     else:
         type_col = _resolve_column(df, ["violation type (hazard)", "violation_type_hazard_id", "category"]) or None
     
-    # Convert dates to month periods
+    # Convert dates to daily periods
     df_copy = df.copy()
-    df_copy['_month'] = _to_month_period(df_copy[date_col])
+    df_copy['_day'] = _to_date_period(df_copy[date_col], granularity='D')  # Daily granularity
     df_copy['_date'] = pd.to_datetime(df_copy[date_col], errors='coerce')
     
     # Get overall counts
-    months = df_copy['_month']
-    counts = months.value_counts().sort_index()
+    days = df_copy['_day']
+    counts = days.value_counts().sort_index()
     
-    # Build detailed breakdown for each month
+    # Build detailed breakdown for each day
     details = []
-    for month_label in counts.index:
-        month_df = df_copy[df_copy['_month'] == month_label]
-        total_count = len(month_df)
+    for day_label in counts.index:
+        day_df = df_copy[df_copy['_day'] == day_label]
+        total_count = len(day_df)
         
         # Top departments
         departments_list = []
-        if dept_col and dept_col in month_df.columns:
-            dept_counts = month_df[dept_col].astype(str).value_counts().head(5)
+        if dept_col and dept_col in day_df.columns:
+            dept_counts = day_df[dept_col].astype(str).value_counts().head(5)
             departments_list = [
                 CountItem(name=str(dept), count=int(count))
                 for dept, count in dept_counts.items()
@@ -302,9 +315,9 @@ async def data_incident_trend_detailed(
         
         # Top types
         types_list = []
-        if type_col and type_col in month_df.columns:
+        if type_col and type_col in day_df.columns:
             # Handle comma-separated values
-            type_series = month_df[type_col].astype(str).str.split(',').explode().str.strip()
+            type_series = day_df[type_col].astype(str).str.split(',').explode().str.strip()
             type_counts = type_series.value_counts().head(5)
             types_list = [
                 CountItem(name=str(t), count=int(count))
@@ -314,8 +327,8 @@ async def data_incident_trend_detailed(
         
         # Severity stats
         severity_stats = None
-        if severity_col and severity_col in month_df.columns:
-            sev_values = pd.to_numeric(month_df[severity_col], errors='coerce').dropna()
+        if severity_col and severity_col in day_df.columns:
+            sev_values = pd.to_numeric(day_df[severity_col], errors='coerce').dropna()
             if len(sev_values) > 0:
                 severity_stats = ScoreStats(
                     avg=float(sev_values.mean()),
@@ -325,8 +338,8 @@ async def data_incident_trend_detailed(
         
         # Risk stats
         risk_stats = None
-        if risk_col and risk_col in month_df.columns:
-            risk_values = pd.to_numeric(month_df[risk_col], errors='coerce').dropna()
+        if risk_col and risk_col in day_df.columns:
+            risk_values = pd.to_numeric(day_df[risk_col], errors='coerce').dropna()
             if len(risk_values) > 0:
                 risk_stats = ScoreStats(
                     avg=float(risk_values.mean()),
@@ -336,15 +349,15 @@ async def data_incident_trend_detailed(
         
         # Recent items (up to 5, sorted by date descending)
         recent_items_list = []
-        if title_col and title_col in month_df.columns:
+        if title_col and title_col in day_df.columns:
             # Sort by date descending and take top 5
-            month_df_sorted = month_df.sort_values('_date', ascending=False).head(5)
+            day_df_sorted = day_df.sort_values('_date', ascending=False).head(5)
             
-            for _, row in month_df_sorted.iterrows():
+            for _, row in day_df_sorted.iterrows():
                 title = str(row.get(title_col, "Untitled"))[:100]  # Truncate long titles
                 department = str(row.get(dept_col, "Unknown")) if dept_col else "Unknown"
                 date_val = row.get('_date')
-                date_str = date_val.strftime('%Y-%m-%d') if pd.notna(date_val) else month_label
+                date_str = date_val.strftime('%Y-%m-%d') if pd.notna(date_val) else day_label
                 severity_val = None
                 if severity_col and severity_col in row.index:
                     sev = pd.to_numeric(row.get(severity_col), errors='coerce')
@@ -357,9 +370,9 @@ async def data_incident_trend_detailed(
                     severity=severity_val
                 ))
         
-        # Create month detail
+        # Create day detail
         month_detail = MonthDetailedData(
-            month=str(month_label),
+            month=str(day_label),
             total_count=total_count,
             departments=departments_list,
             types=types_list,
@@ -409,43 +422,121 @@ async def data_incident_type_distribution(
     })
 
 
-@router.get("/data/root-cause-pareto")
-async def data_root_cause_pareto(
+@router.get("/data/root-cause-pareto/incident-types")
+async def get_root_cause_incident_types(
     dataset: str = Query("incident"),
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     departments: Optional[List[str]] = Query(None, description="Filter by departments"),
     locations: Optional[List[str]] = Query(None, description="Filter by locations"),
-    min_severity: Optional[float] = Query(None, ge=0, le=5, description="Min severity"),
-    max_severity: Optional[float] = Query(None, ge=0, le=5, description="Max severity"),
-    min_risk: Optional[float] = Query(None, ge=0, le=5, description="Min risk"),
-    max_risk: Optional[float] = Query(None, ge=0, le=5, description="Max risk"),
+    sublocations: Optional[List[str]] = Query(None, description="Filter by sublocations"),
+    statuses: Optional[List[str]] = Query(None, description="Filter by status"),
 ):
+    """
+    Get available incident types for the root cause pareto radio buttons.
+    Respects current filters to show only relevant incident types.
+    """
     df = get_incident_df() if (dataset or "incident").lower() == "incident" else get_hazard_df()
     
-    # Apply flexible filters
+    # Apply filters
     df = apply_analytics_filters(
         df, start_date=start_date, end_date=end_date, departments=departments,
-        locations=locations, min_severity=min_severity, max_severity=max_severity,
-        min_risk=min_risk, max_risk=max_risk
+        locations=locations, sublocations=sublocations, statuses=statuses
     )
     
     if df is None or df.empty:
-        return JSONResponse(content={"labels": [], "bars": [], "cum_pct": []})
-    # Accept underscore variant if present
-    rc_col = _resolve_column(df, ["root_cause", "root cause"]) or df.columns[0]
-    vc = df[rc_col].dropna().astype(str).str.split(",").explode().str.strip()
+        return JSONResponse(content={"incident_types": []})
+    
+    # Get incident type column
+    type_col = _resolve_column(df, ["incident_type(s)", "incident_type", "incident type(s)", "category"]) or df.columns[0]
+    
+    # Split and explode multi-value types
+    types = df[type_col].dropna().astype(str).str.split(";").explode().str.strip()
+    types = types[types != ""]
+    types = types[~types.str.contains("nan|null|none|n/a", case=False, na=False, regex=True)]
+    
+    # Get unique types with counts
+    type_counts = types.value_counts()
+    
+    # Return as list of objects with label and count
+    incident_types = [
+        {"label": "All", "value": "All", "count": len(df)}
+    ] + [
+        {"label": str(itype), "value": str(itype), "count": int(count)}
+        for itype, count in type_counts.items()
+    ]
+    
+    return JSONResponse(content={"incident_types": incident_types})
+
+
+@router.get("/data/root-cause-pareto")
+async def data_root_cause_pareto(
+    dataset: str = Query("incident"),
+    incident_type: Optional[str] = Query(None, description="Filter by specific incident type"),
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    departments: Optional[List[str]] = Query(None, description="Filter by departments"),
+    locations: Optional[List[str]] = Query(None, description="Filter by locations"),
+    sublocations: Optional[List[str]] = Query(None, description="Filter by sublocations"),
+    statuses: Optional[List[str]] = Query(None, description="Filter by status"),
+    incident_types: Optional[List[str]] = Query(None, description="Filter by incident types"),
+    top_n: int = Query(15, description="Number of top root causes to show"),
+):
+    df = get_incident_df() if (dataset or "incident").lower() == "incident" else get_hazard_df()
+    
+    # Apply standard filters
+    df = apply_analytics_filters(
+        df, start_date=start_date, end_date=end_date, departments=departments,
+        locations=locations, sublocations=sublocations, statuses=statuses,
+        incident_types=incident_types
+    )
+    
+    if df is None or df.empty:
+        return JSONResponse(content={"labels": [], "bars": [], "cum_pct": [], "incident_type": incident_type or "All"})
+    
+    # Additional filter by specific incident_type (radio button selection)
+    if incident_type and incident_type.strip().lower() not in ["all", ""]:
+        type_col = _resolve_column(df, ["incident_type(s)", "incident_type", "incident type(s)", "category"]) or df.columns[0]
+        # Split multi-value incident types and filter
+        df_exploded = df.copy()
+        df_exploded["_type_split"] = df_exploded[type_col].astype(str).str.split(";")
+        df_exploded = df_exploded.explode("_type_split")
+        df_exploded["_type_split"] = df_exploded["_type_split"].str.strip()
+        # Case-insensitive match
+        mask = df_exploded["_type_split"].str.lower() == incident_type.strip().lower()
+        df = df_exploded[mask].copy()
+    
+    if df.empty:
+        return JSONResponse(content={"labels": [], "bars": [], "cum_pct": [], "incident_type": incident_type or "All"})
+    
+    # Extract and process root causes
+    rc_col = _resolve_column(df, ["Root Cause", "root_cause", "root cause", "Key Factor", "key_factor", "Contributing Factor", "contributing_factor"]) or df.columns[0]
+    
+    # Split on semicolons and explode
+    series = df[rc_col].dropna().astype(str)
+    series = series.str.split(";").explode().str.strip()
+    
     # Remove empty strings and placeholder values
-    vc = vc[vc != ""]
-    vc = vc[~vc.str.contains("nan|null|none|n/a", case=False, na=False)]
-    counts = vc.value_counts()
-    counts = counts.head(15)
+    series = series[series != ""]
+    series = series[~series.str.contains("nan|null|none|n/a|not applicable", case=False, na=False, regex=True)]
+    
+    if series.empty:
+        return JSONResponse(content={"labels": [], "bars": [], "cum_pct": [], "incident_type": incident_type or "All"})
+    
+    # Count and get top N
+    counts = series.value_counts()
+    counts = counts.head(top_n)
+    
+    # Calculate cumulative percentage
     total = counts.sum() if counts.sum() > 0 else 1
     cum = counts.cumsum() / total * 100
+    
     return JSONResponse(content={
         "labels": counts.index.tolist(),
         "bars": counts.values.astype(int).tolist(),
         "cum_pct": cum.round(2).values.tolist(),
+        "incident_type": incident_type or "All",
+        "total_count": int(counts.sum()),
     })
 
 
@@ -507,7 +598,7 @@ async def data_department_month_heatmap(
         return JSONResponse(content={"x": [], "y": [], "z": [], "metric": "count"})
     dep_col = _resolve_column(df, ["department"]) or _resolve_column(df, ["section"]) or df.columns[0]
     date_col = _resolve_column(df, ["occurrence_date", "date of occurrence", "date reported"]) or df.columns[0]
-    months = _to_month_period(df[date_col])
+    months = _to_date_period(df[date_col], granularity='M')
     metric_col = _resolve_column(df, ["risk_score", "severity_score"])  # optional
     cp = pd.DataFrame({"department": df[dep_col].astype(str), "month": months})
     if metric_col is not None:
@@ -564,13 +655,126 @@ async def data_audit_rating_trend():
     rating_col = _resolve_column(df, ["audit_rating", "audit rating"]) or None
     if rating_col is None:
         return JSONResponse(content={"labels": [], "series": []})
-    months = _to_month_period(df[date_col])
+    months = _to_date_period(df[date_col], granularity='M')
     vals = pd.to_numeric(df[rating_col], errors='coerce')
     grp = pd.DataFrame({"month": months, "rating": vals}).groupby("month").mean().sort_index()
     return JSONResponse(content={
         "labels": grp.index.tolist(),
         "series": [{"name": "Avg Rating", "data": grp["rating"].round(2).fillna(0).tolist()}],
     })
+
+
+@router.get("/data/audit-monthly-volume")
+async def data_audit_monthly_volume(
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    departments: Optional[List[str]] = Query(None, description="Filter by departments"),
+    locations: Optional[List[str]] = Query(None, description="Filter by locations"),
+    sublocations: Optional[List[str]] = Query(None, description="Filter by sublocations"),
+    statuses: Optional[List[str]] = Query(None, description="Filter by status"),
+):
+    """
+    Monthly Audit Volume & Closures.
+
+    - Deduplicates audits by ID
+    - Initiated month = earliest Start Date (or Scheduled Date)
+    - Closed month    = latest Entered Closed (or Completion/End Date)
+    - Returns labels (YYYY-MM) and two series: Audits Initiated, Audits Closed
+    """
+    df = get_audit_df()
+    if df is None or df.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+
+    # Apply filters early for consistency with other endpoints
+    df = apply_analytics_filters(
+        df,
+        start_date=start_date,
+        end_date=end_date,
+        departments=departments,
+        locations=locations,
+        sublocations=sublocations,
+        statuses=statuses,
+    )
+    if df is None or df.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+
+    # Resolve columns (flexible matching across common variants)
+    id_col = _resolve_column(df, [
+        "audit number", "audit_number", "audit id", "audit_id",
+    ])
+    start_col = _resolve_column(df, [
+        "start date", "start_date", "scheduled date", "scheduled_date",
+    ])
+    closed_col = _resolve_column(df, [
+        "entered closed", "entered_closed", "completion date", "completion_date", "end date", "end_date",
+    ])
+
+    if id_col is None:
+        # Create a surrogate ID if missing to avoid failure; use index
+        df = df.copy()
+        df["__audit_id_tmp"] = [f"AUD-{i+1}" for i in range(len(df))]
+        id_col = "__audit_id_tmp"
+
+    # Coerce date columns
+    if start_col is not None:
+        df[start_col] = pd.to_datetime(df[start_col], errors="coerce")
+    if closed_col is not None:
+        df[closed_col] = pd.to_datetime(df[closed_col], errors="coerce")
+
+    # Deduplicate audits by ID, keeping earliest start and latest close
+    agg_dict = {}
+    if start_col is not None:
+        agg_dict[start_col] = "min"
+    if closed_col is not None:
+        agg_dict[closed_col] = "max"
+    if not agg_dict:
+        return JSONResponse(content={"labels": [], "series": []})
+
+    aud = df.groupby(id_col, as_index=False).agg(agg_dict)
+
+    # Build initiated and closed month counts
+    initiated = pd.Series(dtype=int)
+    closed = pd.Series(dtype=int)
+
+    if start_col is not None:
+        aud["StartMonth"] = pd.to_datetime(aud[start_col], errors="coerce").dt.to_period("M")
+        initiated = aud.dropna(subset=["StartMonth"]).groupby("StartMonth").size()
+        initiated.name = "Audits Initiated"
+
+    if closed_col is not None:
+        aud["CloseMonth"] = pd.to_datetime(aud[closed_col], errors="coerce").dt.to_period("M")
+        closed = aud.dropna(subset=["CloseMonth"]).groupby("CloseMonth").size()
+        closed.name = "Audits Closed"
+
+    # Merge into a unified monthly index
+    if initiated.empty and closed.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+
+    all_periods = sorted(set(initiated.index.tolist()) | set(closed.index.tolist()))
+    if not all_periods:
+        return JSONResponse(content={"labels": [], "series": []})
+
+    # Ensure continuous range from min to max
+    pmin = min(all_periods)
+    pmax = max(all_periods)
+    full_idx = pd.period_range(pmin, pmax, freq="M")
+
+    monthly = pd.DataFrame(index=full_idx)
+    if not initiated.empty:
+        monthly["Audits Initiated"] = initiated
+    if not closed.empty:
+        monthly["Audits Closed"] = closed
+
+    monthly = monthly.fillna(0).astype(int)
+
+    labels = [str(p) for p in monthly.index]
+    series = []
+    if "Audits Initiated" in monthly.columns:
+        series.append({"name": "Audits Initiated", "data": monthly["Audits Initiated"].tolist()})
+    if "Audits Closed" in monthly.columns:
+        series.append({"name": "Audits Closed", "data": monthly["Audits Closed"].tolist()})
+
+    return JSONResponse(content={"labels": labels, "series": series})
 
 
 @router.get("/data/inspection-coverage")
@@ -581,7 +785,7 @@ async def data_inspection_coverage():
     date_col = _resolve_column(df, ["start_date", "start date"]) or df.columns[0]
     # Support both 'audit_status' and 'audit status'
     status_col = _resolve_column(df, ["audit_status", "audit status"]) or df.columns[0]
-    months = _to_month_period(df[date_col])
+    months = _to_date_period(df[date_col], granularity='M')
     tmp = pd.DataFrame({"month": months, "status": df[status_col].astype(str)})
     pivot = tmp.pivot_table(index="month", columns="status", values="status", aggfunc="count").fillna(0).astype(int)
     pivot = pivot.sort_index()
@@ -591,8 +795,24 @@ async def data_inspection_coverage():
 
 
 @router.get("/data/inspection-top-findings")
-async def data_inspection_top_findings():
+async def data_inspection_top_findings(
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    departments: Optional[List[str]] = Query(None, description="Filter by departments"),
+    locations: Optional[List[str]] = Query(None, description="Filter by locations"),
+    sublocations: Optional[List[str]] = Query(None, description="Filter by sublocations"),
+    statuses: Optional[List[str]] = Query(None, description="Filter by status"),
+):
     df = get_inspection_df()
+    if df is None or df.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Apply filters
+    df = apply_analytics_filters(
+        df, start_date=start_date, end_date=end_date, departments=departments,
+        locations=locations, sublocations=sublocations, statuses=statuses
+    )
+    
     if df is None or df.empty:
         return JSONResponse(content={"labels": [], "series": []})
     # Prefer granular finding/observation text; fallback to checklist category
@@ -639,8 +859,24 @@ async def data_inspection_top_findings():
 
 
 @router.get("/data/audit-top-findings")
-async def data_audit_top_findings():
+async def data_audit_top_findings(
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    departments: Optional[List[str]] = Query(None, description="Filter by departments"),
+    locations: Optional[List[str]] = Query(None, description="Filter by locations"),
+    sublocations: Optional[List[str]] = Query(None, description="Filter by sublocations"),
+    statuses: Optional[List[str]] = Query(None, description="Filter by status"),
+):
     df = get_audit_df()
+    if df is None or df.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Apply filters
+    df = apply_analytics_filters(
+        df, start_date=start_date, end_date=end_date, departments=departments,
+        locations=locations, sublocations=sublocations, statuses=statuses
+    )
+    
     if df is None or df.empty:
         return JSONResponse(content={"labels": [], "series": []})
     # Prefer granular finding/observation text; fallback to checklist category
@@ -687,94 +923,187 @@ async def data_audit_top_findings():
 
 
 @router.get("/data/incident-top-findings")
-async def data_incident_top_findings():
-    df = get_incident_df()
+async def data_incident_top_findings(
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    departments: Optional[List[str]] = Query(None, description="Filter by departments"),
+    locations: Optional[List[str]] = Query(None, description="Filter by locations"),
+    sublocations: Optional[List[str]] = Query(None, description="Filter by sublocations"),
+    statuses: Optional[List[str]] = Query(None, description="Filter by status"),
+    violation_types: Optional[List[str]] = Query(None, description="Filter by violation types"),
+    min_count: int = Query(8, description="Minimum count to avoid grouping as 'Others'"),
+):
+    """
+    Returns hazards grouped by Incident Type with severity breakdown from Hazard ID sheet.
+    Creates a stacked bar chart showing severity distribution per incident type.
+    Uses: Sheet='Hazard ID', Columns=['Incident Type(s)', 'Worst Case Consequence Potential (Hazard ID)']
+    """
+    df = get_hazard_df()
     if df is None or df.empty:
         return JSONResponse(content={"labels": [], "series": []})
-    # For incidents, use description, conclusion, or root_cause
-    col_candidates = [
-        "description", "conclusion", "root_cause", "incident_type"
+    
+    # Apply filters
+    df = apply_analytics_filters(
+        df, start_date=start_date, end_date=end_date, departments=departments,
+        locations=locations, sublocations=sublocations, statuses=statuses,
+        violation_types=violation_types
+    )
+    
+    if df is None or df.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Helper function to clean text
+    def clean_column(series):
+        return (
+            series.astype(str)
+            .str.replace("\xa0", " ", regex=False)
+            .str.replace(r"\s+", " ", regex=True)
+            .str.strip()
+            .replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "None": pd.NA, "null": pd.NA, "NULL": pd.NA})
+        )
+    
+    # Find incident type column
+    incident_col_candidates = [
+        "incident_type(s)", "incident type(s)", "incident_types", "incident type", "incident_type"
     ]
-    col = _resolve_column(df, col_candidates) or df.columns[0]
-
-    series = df[col].dropna().astype(str)
-
-    # Normalize whitespace and strip punctuation
-    series = series.str.replace(r"\s+", " ", regex=True).str.strip(" \t\r\n-–•·;:,.")
-
-    # Remove placeholders and generic negations
-    na_pat = re.compile(r"^(n/?a|na|nan|null|none|not\s*applicable)$", re.IGNORECASE)
-    no_pat = re.compile(r"^no(\s+|$)|no\s+(finding|findings|observation|observations|deficien(?:cy|cies)|issue|issues|recommendation(?:s)?)$", re.IGNORECASE)
-    mask = (~series.str.match(na_pat)) & (~series.str.match(no_pat)) & (series.str.len() > 0)
-    series = series[mask]
-
-    # If we are using a category-like column, split on delimiters and explode to avoid concatenated labels
-    is_category_like = col.lower().strip() in {"checklist_category", "checklist category"}
-    if is_category_like:
-        # Split on ';' or ',' and explode
-        series = series.str.split(r"[;,]").explode().astype(str)
-        # Re-normalize tokens
-        series = series.str.replace(r"\s+", " ", regex=True).str.strip(" \t\r\n-–•·;:,.")
-        # Drop empty after split
-        series = series[series.str.len() > 0]
-
-    # Canonicalize casing for consistent aggregation
-    tokens = series.str.strip().str.replace(r"\s+", " ", regex=True)
-
-    # Build value counts and take top 20
-    vc = tokens.value_counts().head(20)
-    labels = [str(x) for x in vc.index.tolist()]
-    counts = vc.values.astype(int).tolist()
-
+    incident_col = _resolve_column(df, incident_col_candidates)
+    
+    # Find severity column - Use Hazard ID severity column as specified
+    severity_col_candidates = [
+        "worst case consequence potential (hazard id)",
+        "worst_case_consequence_potential_hazard_id",
+        "worst case consequence potential hazard id",
+        "worst_case_consequence_potential_(hazard_id)"
+    ]
+    severity_col = _resolve_column(df, severity_col_candidates)
+    
+    if incident_col is None or severity_col is None:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Clean both columns
+    df[incident_col] = clean_column(df[incident_col])
+    df[severity_col] = clean_column(df[severity_col])
+    
+    # Drop rows with NA in either column
+    df_clean = df.dropna(subset=[incident_col, severity_col])
+    
+    if df_clean.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Group small incident types into "Others"
+    counts = df_clean[incident_col].value_counts()
+    main_incidents = counts[counts >= min_count].index
+    
+    df_filtered = df_clean[df_clean[incident_col].isin(main_incidents)].copy()
+    
+    # Add "Others" group
+    if (counts < min_count).any():
+        others_df = df_clean[~df_clean[incident_col].isin(main_incidents)].copy()
+        if not others_df.empty:
+            others_df[incident_col] = "Others"
+            df_filtered = pd.concat([df_filtered, others_df], ignore_index=True)
+    
+    # Define severity order (only C0-C3 for Hazard ID sheet as specified)
+    severity_order = ["C0 - No Ill Effect", "C1 - Minor", "C2 - Serious", "C3 - Severe"]
+    
+    # Create crosstab
+    matrix = pd.crosstab(df_filtered[incident_col], df_filtered[severity_col])
+    
+    # Ensure all severity levels exist
+    for sev in severity_order:
+        if sev not in matrix.columns:
+            matrix[sev] = 0
+    
+    # Order columns and sort rows by total
+    matrix = matrix[severity_order]
+    matrix["Total"] = matrix.sum(axis=1)
+    matrix = matrix.sort_values("Total", ascending=False)
+    totals = matrix["Total"].astype(int).tolist()
+    matrix = matrix.drop(columns="Total")
+    
+    # Build response
+    labels = matrix.index.tolist()  # Incident types (x-axis)
+    series = [
+        {"name": sev, "data": matrix[sev].astype(int).tolist()}
+        for sev in severity_order
+    ]
+    
     return JSONResponse(content={
         "labels": labels,
-        "series": [{"name": "Count", "data": counts}],
+        "series": series,
+        "totals": totals,
+        "legend": severity_order,
+        "records_used": int(df_clean.shape[0]),
+        "min_count_for_others": int(min_count)
     })
 
 
 @router.get("/data/hazard-top-findings")
-async def data_hazard_top_findings():
+async def data_hazard_top_findings(
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    departments: Optional[List[str]] = Query(None, description="Filter by departments"),
+    locations: Optional[List[str]] = Query(None, description="Filter by locations"),
+    sublocations: Optional[List[str]] = Query(None, description="Filter by sublocations"),
+    statuses: Optional[List[str]] = Query(None, description="Filter by status"),
+    violation_types: Optional[List[str]] = Query(None, description="Filter by violation types"),
+):
+    """
+    Returns hazard counts grouped by Incident Type(s).
+    Shows category breakdown similar to: 'No Loss / No Injury', 'Site HSE Rules', etc.
+    """
     df = get_hazard_df()
     if df is None or df.empty:
         return JSONResponse(content={"labels": [], "series": []})
-    # For hazards, use description or violation_type
+    
+    # Apply filters
+    df = apply_analytics_filters(
+        df, start_date=start_date, end_date=end_date, departments=departments,
+        locations=locations, sublocations=sublocations, statuses=statuses,
+        violation_types=violation_types
+    )
+    
+    if df is None or df.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Look for 'Incident Type(s)' column (with or without parentheses/spaces)
     col_candidates = [
-        "description", "violation_type_hazard_id", "incident_type"
+        "incident_type(s)",
+        "incident type(s)",
+        "incident_types",
+        "incident type",
+        "incident_type"
     ]
-    col = _resolve_column(df, col_candidates) or df.columns[0]
-
-    series = df[col].dropna().astype(str)
-
-    # Normalize whitespace and strip punctuation
-    series = series.str.replace(r"\s+", " ", regex=True).str.strip(" \t\r\n-–•·;:,.")
-
-    # Remove placeholders and generic negations
-    na_pat = re.compile(r"^(n/?a|na|nan|null|none|not\s*applicable)$", re.IGNORECASE)
-    no_pat = re.compile(r"^no(\s+|$)|no\s+(finding|findings|observation|observations|deficien(?:cy|cies)|issue|issues|recommendation(?:s)?)$", re.IGNORECASE)
-    mask = (~series.str.match(na_pat)) & (~series.str.match(no_pat)) & (series.str.len() > 0)
-    series = series[mask]
-
-    # If we are using a category-like column, split on delimiters and explode to avoid concatenated labels
-    is_category_like = col.lower().strip() in {"checklist_category", "checklist category"}
-    if is_category_like:
-        # Split on ';' or ',' and explode
-        series = series.str.split(r"[;,]").explode().astype(str)
-        # Re-normalize tokens
-        series = series.str.replace(r"\s+", " ", regex=True).str.strip(" \t\r\n-–•·;:,.")
-        # Drop empty after split
-        series = series[series.str.len() > 0]
-
-    # Canonicalize casing for consistent aggregation
-    tokens = series.str.strip().str.replace(r"\s+", " ", regex=True)
-
-    # Build value counts and take top 20
-    vc = tokens.value_counts().head(20)
+    col = _resolve_column(df, col_candidates)
+    
+    if col is None:
+        # Fallback to empty result if column not found
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Clean the column: normalize whitespace, remove NA values
+    series = (
+        df[col]
+        .astype(str)
+        .str.replace("\xa0", " ", regex=False)  # Replace non-breaking spaces
+        .str.replace(r"\s+", " ", regex=True)   # Normalize whitespace
+        .str.strip()
+        .replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "None": pd.NA, "null": pd.NA, "NULL": pd.NA})
+        .dropna()
+    )
+    
+    if series.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Count occurrences of each incident type category
+    vc = series.value_counts().sort_values(ascending=False)
+    
+    # Return all categories (no limit, to match your pattern)
     labels = [str(x) for x in vc.index.tolist()]
     counts = vc.values.astype(int).tolist()
-
+    
     return JSONResponse(content={
         "labels": labels,
-        "series": [{"name": "Count", "data": counts}],
+        "series": [{"name": "Hazards", "data": counts}],
     })
 
 
@@ -787,7 +1116,7 @@ async def data_incident_cost_trend(dataset: str = Query("incident")):
     cost_col = _resolve_column(df, ["total cost", "estimated_cost_impact"]) or None
     if cost_col is None:
         return JSONResponse(content={"labels": [], "series": []})
-    months = _to_month_period(df[date_col])
+    months = _to_date_period(df[date_col], granularity='M')
     vals = pd.to_numeric(df[cost_col], errors='coerce')
     grp = pd.DataFrame({"month": months, "cost": vals}).groupby("month").sum().sort_index()
     return JSONResponse(content={

@@ -29,6 +29,7 @@ export default function ShadcnBarCard({
   height = 260,
   stacked = false,
   maxCategories = 12,
+  preserveOrder = false,
   refreshKey,
 }: {
   title: string;
@@ -37,14 +38,15 @@ export default function ShadcnBarCard({
   height?: number;
   stacked?: boolean;
   maxCategories?: number;
+  preserveOrder?: boolean;
   refreshKey?: number;
 }) {
   const { data, error, loading } = useCachedGet<ChartResponse>(endpoint, params, undefined, refreshKey);
 
   const safeData = useMemo<ChartResponse | null>(() => {
     if (!data) return null;
-    
-    // Filter invalid labels and cap category count
+
+    // Filter invalid labels
     const valid: { idx: number; label: string }[] = [];
     data.labels.forEach((lbl, idx) => {
       const s = String(lbl || "").trim();
@@ -52,25 +54,35 @@ export default function ShadcnBarCard({
         valid.push({ idx, label: s });
       }
     });
-    
-    // Sort by total (desc) and keep top N
-    const totals = valid.map(({ idx }) => 
+
+    // If preserveOrder is true, keep original label order and do not cap or group
+    if (preserveOrder) {
+      const labels = valid.map(v => v.label);
+      const series = data.series.map((s) => ({
+        name: s.name,
+        data: valid.map(v => Number(s.data[v.idx]) || 0),
+      }));
+      return { labels, series };
+    }
+
+    // Otherwise, sort by total (desc) and keep top N with an Other bucket
+    const totals = valid.map(({ idx }) =>
       data.series.reduce((acc, s) => acc + (Number(s.data[idx]) || 0), 0)
     );
-    
+
     const order = valid
       .map((v, i) => ({ ...v, total: totals[i] }))
       .sort((a, b) => b.total - a.total);
-      
+
     const top = order.slice(0, maxCategories);
     const rest = order.slice(maxCategories);
-    
+
     const labels = top.map((t) => t.label);
     let series = data.series.map((s) => ({
       name: s.name,
       data: top.map((t) => Number(s.data[t.idx]) || 0),
     }));
-    
+
     if (rest.length > 0) {
       // Add "Other" bucket
       labels.push("Other");
@@ -82,9 +94,9 @@ export default function ShadcnBarCard({
         ],
       }));
     }
-    
+
     return { labels, series };
-  }, [data, maxCategories]);
+  }, [data, maxCategories, preserveOrder]);
 
   const chartData = useMemo(() => {
     if (!safeData) return [];

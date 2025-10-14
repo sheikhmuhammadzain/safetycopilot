@@ -203,14 +203,15 @@ def extract_filter_options(df: pd.DataFrame, dataset_name: str = "incident") -> 
     # Extract date range
     date_range = _extract_date_range(
         df,
-        ['occurrence_date', 'date_of_occurrence', 'date_reported', 'entered_date', 
-         'start_date', 'scheduled_date', 'created_date']
+        ['Date of Occurrence', 'occurrence_date', 'date_of_occurrence', 'Date Reported', 
+         'date_reported', 'Entered Date', 'entered_date', 'Start Date', 'start_date', 
+         'Scheduled Date', 'scheduled_date', 'created_date']
     )
     
     # Extract departments
     departments = _extract_unique_values(
         df,
-        ['department', 'dept', 'department_name'],
+        ['Department', 'department', 'dept', 'department_name'],
         explode_comma_separated=False,
         min_count=1
     )
@@ -218,7 +219,7 @@ def extract_filter_options(df: pd.DataFrame, dataset_name: str = "incident") -> 
     # Extract locations
     locations = _extract_unique_values(
         df,
-        ['location', 'location.1', 'site', 'facility'],
+        ['Location', 'Location (EPCL)', 'location', 'location.1', 'site', 'facility', 'Audit Location'],
         explode_comma_separated=False,
         min_count=1
     )
@@ -226,7 +227,7 @@ def extract_filter_options(df: pd.DataFrame, dataset_name: str = "incident") -> 
     # Extract sublocations
     sublocations = _extract_unique_values(
         df,
-        ['sublocation', 'sub_location', 'area', 'zone'],
+        ['Sub-Location', 'sublocation', 'sub_location', 'area', 'zone', 'Section'],
         explode_comma_separated=False,
         min_count=1
     )
@@ -234,7 +235,7 @@ def extract_filter_options(df: pd.DataFrame, dataset_name: str = "incident") -> 
     # Extract statuses
     statuses = _extract_unique_values(
         df,
-        ['status', 'incident_status', 'current_status'],
+        ['Status', 'status', 'incident_status', 'current_status', 'Audit Status'],
         explode_comma_separated=False,
         min_count=1
     )
@@ -242,7 +243,7 @@ def extract_filter_options(df: pd.DataFrame, dataset_name: str = "incident") -> 
     # Extract incident types
     incident_types = _extract_unique_values(
         df,
-        ['incident_type(s)', 'incident_type', 'category', 'accident_type', 'type'],
+        ['Incident Type(s)', 'incident_type(s)', 'incident_type', 'Category', 'category', 'accident_type', 'type'],
         explode_comma_separated=True,  # Handle comma-separated values
         min_count=1
     )
@@ -252,7 +253,7 @@ def extract_filter_options(df: pd.DataFrame, dataset_name: str = "incident") -> 
     if dataset_name.lower() == "hazard":
         violation_types = _extract_unique_values(
             df,
-            ['violation_type_hazard_id', 'violation_type', 'violation_type_(incident)'],
+            ['Violation Type (Hazard ID)', 'violation_type_hazard_id', 'violation_type', 'Violation Type (Incident)', 'violation_type_(incident)'],
             explode_comma_separated=True,
             min_count=1
         )
@@ -260,13 +261,13 @@ def extract_filter_options(df: pd.DataFrame, dataset_name: str = "incident") -> 
     # Extract severity range
     severity_range = _extract_numeric_range(
         df,
-        ['severity_score', 'severity', 'severity_level']
+        ['Severity Score', 'severity_score', 'Severity', 'severity', 'severity_level']
     )
     
     # Extract risk range
     risk_range = _extract_numeric_range(
         df,
-        ['risk_score', 'risk', 'risk_level']
+        ['Risk Score', 'risk_score', 'Risk', 'risk', 'risk_level']
     )
     
     return FilterOptionsResponse(
