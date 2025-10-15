@@ -936,7 +936,18 @@ export default function Overview() {
           </div>
 
           <div className="lg:col-span-12 relative">
-            <ShadcnBarCard title="Top Inspection Findings" endpoint="/analytics/data/inspection-top-findings" params={{ dataset: "inspection", ...filterParams }} refreshKey={refreshKey} />
+            <ShadcnBarCard 
+              title="Inspection Progression" 
+              endpoint="/analytics/data/inspection-progression" 
+              params={{ 
+                dataset: "inspection", 
+                closure_mode: "status_fallback",
+                ...filterParams 
+              }} 
+              preserveOrder={true}
+              maxCategories={200}
+              refreshKey={refreshKey} 
+            />
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -945,15 +956,16 @@ export default function Overview() {
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="left" className="max-w-sm">
-                  <p className="font-semibold mb-2">Top Inspection Findings</p>
-                  <p className="text-sm mb-2">Lists the most commonly identified issues during safety inspections.</p>
+                  <p className="font-semibold mb-2">Inspection Progression</p>
+                  <p className="text-sm mb-2">Monthly timeline of inspection activity: started vs completed.</p>
                   <p className="text-sm font-mono bg-muted p-2 rounded mb-2">
-                    Count = Number of Times Finding Was Reported
+                    Started = Count by Start Date • Closed = Count by Closure Date
                   </p>
                   <ul className="text-xs space-y-1">
-                    <li>• <strong>Top findings:</strong> Issues that appear most frequently across inspections</li>
-                    <li>• <strong>Examples:</strong> Housekeeping, PPE violations, equipment issues</li>
-                    <li>• <strong>Use case:</strong> Prioritize corrective actions and training needs</li>
+                    <li>• <strong>Started:</strong> Inspections initiated in that month</li>
+                    <li>• <strong>Closed:</strong> Inspections completed/verified in that month</li>
+                    <li>• <strong>Gap analysis:</strong> Compare bars to identify backlogs</li>
+                    <li>• <strong>Use case:</strong> Track inspection throughput and closure rates</li>
                   </ul>
                 </TooltipContent>
               </Tooltip>

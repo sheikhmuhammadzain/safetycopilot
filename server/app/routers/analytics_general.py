@@ -858,6 +858,129 @@ async def data_inspection_top_findings(
     })
 
 
+@router.get("/data/inspection-progression")
+async def data_inspection_progression(
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    departments: Optional[List[str]] = Query(None, description="Filter by departments"),
+    locations: Optional[List[str]] = Query(None, description="Filter by locations"),
+    sublocations: Optional[List[str]] = Query(None, description="Filter by sublocations"),
+    statuses: Optional[List[str]] = Query(None, description="Filter by status"),
+    closure_mode: str = Query("status_fallback", description="Closure date logic: verified|due|status_fallback"),
+    last_n_months: Optional[int] = Query(None, description="Limit to last N months"),
+):
+    """
+    Inspection Progression: Monthly counts of inspections started vs closed.
+    
+    - Started: Count by Start Date (monthly aggregation)
+    - Closed: Count by Closure Date based on closure_mode:
+        - "verified": Use Action Item Verification Due Date
+        - "due": Use Action Item Due Date  
+        - "status_fallback": Try Verification > Due > Start Date (if status=closed)
+    
+    Returns:
+        - labels: Month strings (e.g., "Jan '24")
+        - series: [
+            {"name": "Inspections Started", "data": [...]},
+            {"name": "Inspections Closed", "data": [...]}
+          ]
+    """
+    df = get_inspection_df()
+    if df is None or df.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Apply filters
+    df = apply_analytics_filters(
+        df, 
+        start_date=start_date, 
+        end_date=end_date, 
+        departments=departments,
+        locations=locations, 
+        sublocations=sublocations, 
+        statuses=statuses
+    )
+    
+    if df is None or df.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Resolve column names (flexible matching)
+    start_col = _resolve_column(df, ["start_date", "start date", "scheduled_date", "scheduled date"])
+    verify_col = _resolve_column(df, [
+        "action_item_verification_due_date", 
+        "action item verification due date",
+        "verification_due_date",
+        "verification due date"
+    ])
+    due_col = _resolve_column(df, [
+        "action_item_due_date", 
+        "action item due date",
+        "due_date",
+        "due date"
+    ])
+    status_col = _resolve_column(df, ["audit_status", "audit status", "status"])
+    
+    if start_col is None:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Parse date columns (handle timezone-aware datetimes)
+    df_work = df.copy()
+    for col in [start_col, verify_col, due_col]:
+        if col and col in df_work.columns:
+            # Convert to datetime and remove timezone if present
+            df_work[col] = pd.to_datetime(df_work[col], errors="coerce", utc=True)
+            if df_work[col].dt.tz is not None:
+                df_work[col] = df_work[col].dt.tz_localize(None)
+    
+    # Build closure date based on mode
+    if closure_mode == "verified" and verify_col:
+        df_work["_closure"] = df_work[verify_col]
+    elif closure_mode == "due" and due_col:
+        df_work["_closure"] = df_work[due_col]
+    else:  # status_fallback
+        # Priority: Verification > Due > Start (if closed)
+        df_work["_closure"] = df_work.get(verify_col) if verify_col else pd.Series(dtype='datetime64[ns]')
+        if due_col:
+            df_work["_closure"] = df_work["_closure"].combine_first(df_work[due_col])
+        
+        # Fallback: use start_date if status = closed
+        if status_col:
+            closed_mask = df_work[status_col].astype(str).str.lower().eq("closed")
+            df_work.loc[closed_mask & df_work["_closure"].isna(), "_closure"] = df_work.loc[closed_mask, start_col]
+    
+    # Monthly aggregation
+    def monthly_count(series):
+        s = series.dropna()
+        if s.empty:
+            return pd.Series(dtype=int)
+        return s.groupby(s.dt.to_period("M")).size()
+    
+    started = monthly_count(df_work[start_col])
+    closed = monthly_count(df_work["_closure"])
+    
+    # Merge into timeline
+    all_periods = sorted(set(started.index.tolist()) | set(closed.index.tolist()))
+    if not all_periods:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    timeline = pd.DataFrame(index=all_periods)
+    timeline["Started"] = started
+    timeline["Closed"] = closed
+    timeline = timeline.fillna(0).astype(int)
+    
+    # Optional: limit to last N months
+    if last_n_months and last_n_months > 0:
+        timeline = timeline.tail(last_n_months)
+    
+    # Format response
+    labels = [p.strftime("%b '%y") for p in timeline.index.to_timestamp()]
+    series = [
+        {"name": "Inspections Started", "data": timeline["Started"].tolist()},
+        {"name": "Inspections Closed", "data": timeline["Closed"].tolist()},
+    ]
+    
+    return JSONResponse(content={"labels": labels, "series": series})
+
+
 @router.get("/data/audit-top-findings")
 async def data_audit_top_findings(
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
