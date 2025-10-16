@@ -906,10 +906,30 @@
     };
 
     const clearConversation = () => {
+      // Clear conversation history
       setConversationHistory([]);
       savedMessageIdsRef.current.clear();
       currentMessageIdRef.current = null;
       localStorage.removeItem('safety-copilot-conversation');
+      
+      // Clear current message state
+      setCurrentQuestion("");
+      setCurrentAnalysis("");
+      setFinalAnswer("");
+      setDebouncedAnalysis("");
+      setResponse(null);
+      setToolCalls([]);
+      setCurrentCode("");
+      setCurrentStage("");
+      setThinkingText("");
+      setReasoningText("");
+      setStreamEvents([]);
+      setCurrentSaved(false);
+      
+      // Reset refs
+      isAnswerModeRef.current = false;
+      receivedAnswerTokensRef.current = false;
+      
       // Conversation cleared, no toast needed
     };
 
