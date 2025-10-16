@@ -425,6 +425,8 @@
     const bottomRef = useRef<HTMLDivElement | null>(null); // Ref for auto-scroll to bottom
     const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
     const receivedAnswerTokensRef = useRef<boolean>(false);
+    const messageCounterRef = useRef<number>(0); // Counter for unique IDs
+    const isSavingRef = useRef<boolean>(false); // Lock to prevent concurrent saves
 
     /**
      * Get recent conversation context for agent memory (last N messages)
@@ -488,6 +490,13 @@
         
         // Check if already saved
         if (savedMessageIdsRef.current.has(messageId)) {
+          console.log('⏭️ Already saved:', messageId);
+          return;
+        }
+        
+        // Check if currently saving (prevent race condition)
+        if (isSavingRef.current) {
+          console.log('🔒 Save in progress, skipping:', messageId);
           return;
         }
         
@@ -498,45 +507,51 @@
           finalAnswer ||
           response?.analysis ||
           response?.answer ||
-          toolCalls.length > 0 ||
-          response
+          toolCalls.length > 0
         );
         
         if (!hasContent) {
+          console.log('⏭️ No content to save');
           return;
         }
         
-        console.log('💾 Auto-saving message to history:', messageId, currentQuestion);
+        console.log('💾 Auto-saving message:', messageId);
         
-        // Mark as saved FIRST
+        // Set saving lock
+        isSavingRef.current = true;
+        
+        // Mark as saved FIRST to prevent duplicate attempts
         savedMessageIdsRef.current.add(messageId);
         
-        // Save to history (keeps all messages for UI, agent uses only last N)
+        // Capture current values to avoid stale closures
+        const messageToSave = {
+          id: messageId,
+          question: currentQuestion,
+          dataset: currentDataset,
+          toolCalls: toolCalls.slice(),
+          analysis: currentAnalysis || finalAnswer || response?.analysis || response?.answer || "",
+          response: response || null,
+          timestamp: Date.now(),
+        };
+        
+        // Save to history
         setConversationHistory(prev => {
-          // Double-check to prevent duplicate (in case manual save already happened)
+          // Final check to prevent duplicate
           if (prev.some(msg => msg.id === messageId)) {
-            console.log('⏭️ Message already in state (auto-save), skipping:', messageId);
+            console.log('⏭️ Message already in state, skipping:', messageId);
+            isSavingRef.current = false; // Release lock
             return prev;
           }
           
-          const next = [
-            ...prev,
-            {
-              id: messageId,
-              question: currentQuestion,
-              dataset: currentDataset,
-              toolCalls: toolCalls.slice(),
-              analysis: currentAnalysis || finalAnswer || response?.analysis || response?.answer || "",
-              response: response || null,
-              timestamp: Date.now(),
-            },
-          ];
-          // Mark current as saved (hide live container)
-          setCurrentSaved(true);
-          return next;
+          console.log('✅ Saved message:', messageId);
+          isSavingRef.current = false; // Release lock
+          return [...prev, messageToSave];
         });
+        
+        // Mark as saved AFTER state update (outside state updater)
+        setTimeout(() => setCurrentSaved(true), 0);
       }
-    }, [isStreaming, currentQuestion, currentAnalysis, finalAnswer, toolCalls, response, currentDataset]);
+    }, [isStreaming, currentQuestion]);
 
     // Load conversation from localStorage on mount
     useEffect(() => {
@@ -545,13 +560,18 @@
         if (saved) {
           const parsed = JSON.parse(saved);
           // Migrate old messages without IDs
-          const migrated = parsed.map((m: any) => ({
+          const migrated = parsed.map((m: any, idx: number) => ({
             ...m,
-            id: m.id || `msg_${m.timestamp}_${Math.random().toString(36).substr(2, 9)}`,
+            id: m.id || `msg_${m.timestamp}_${idx}_${Math.random().toString(36).substr(2, 9)}`,
           }));
           setConversationHistory(migrated);
-          // Rebuild savedMessageIds set
+          
+          // Rebuild refs
           savedMessageIdsRef.current = new Set(migrated.map((m: ConversationMessage) => m.id));
+          messageCounterRef.current = migrated.length; // Start counter after loaded messages
+          isSavingRef.current = false; // Ensure lock is released
+          
+          console.log(`📚 Loaded ${migrated.length} messages from storage`);
         }
       } catch (err) {
         console.error('Failed to load conversation:', err);
@@ -569,46 +589,40 @@
       }
     }, [conversationHistory]);
 
-    // Save current message to history (with duplicate prevention)
+    // Manual save function (only used in error handlers)
     const saveCurrentMessageToHistory = () => {
       const messageId = currentMessageIdRef.current;
-      if (!messageId) return; // No active message
+      if (!messageId) return;
       
       // Check if already saved
       if (savedMessageIdsRef.current.has(messageId)) {
-        console.log('⏭️ Message already saved, skipping duplicate save:', messageId);
+        console.log('⏭️ Already saved (manual), skipping:', messageId);
         return;
       }
       
-      // Don't save empty messages (no question, no tool calls, no response)
-      if (!currentQuestion && toolCalls.length === 0 && !response) {
-        console.log('⏭️ Skipping empty message save');
+      // Check saving lock
+      if (isSavingRef.current) {
+        console.log('🔒 Save in progress (manual), skipping:', messageId);
         return;
       }
       
-      console.log('💾 Saving message to history:', messageId, currentQuestion);
+      console.log('💾 Manual save:', messageId);
       
-      // Mark as saved FIRST to prevent race conditions
+      isSavingRef.current = true;
       savedMessageIdsRef.current.add(messageId);
       
-      const analysisText =
-        currentAnalysis ||
-        finalAnswer ||
-        response?.analysis ||
-        response?.answer ||
-        "";
+      const analysisText = currentAnalysis || finalAnswer || response?.analysis || response?.answer || "";
+      const analysisToStore = analysisText || "Analysis complete.";
 
-      const analysisToStore = analysisText || "Analysis complete. See tool outputs below.";
-
-      // Use functional update to prevent stale state and check for duplicates
       setConversationHistory(prev => {
-        // Double-check if message already exists in state (prevent flash duplicates)
         if (prev.some(msg => msg.id === messageId)) {
-          console.log('⏭️ Message already in state, skipping:', messageId);
+          console.log('⏭️ Already in state (manual), skipping:', messageId);
+          isSavingRef.current = false;
           return prev;
         }
         
-        const next = [
+        isSavingRef.current = false;
+        return [
           ...prev,
           {
             id: messageId,
@@ -620,10 +634,9 @@
             timestamp: Date.now(),
           },
         ];
-        // Mark current as saved to hide the live user bubble
-        setCurrentSaved(true);
-        return next;
       });
+      
+      setTimeout(() => setCurrentSaved(true), 0);
     };
 
     const startWebSocketStreaming = (overrideQuestion?: string, overrideDataset?: string) => {
@@ -631,9 +644,15 @@
       const d = overrideDataset ?? dataset;
       if (!q) return;
 
-      // Generate unique message ID FIRST
-      const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Generate unique message ID with counter to prevent any collisions
+      messageCounterRef.current += 1;
+      const messageId = `msg_${Date.now()}_${messageCounterRef.current}_${Math.random().toString(36).substr(2, 9)}`;
       currentMessageIdRef.current = messageId;
+      
+      console.log('🆕 New message ID:', messageId);
+      
+      // Reset saving lock for new message
+      isSavingRef.current = false;
       
       // Clear previous message states before starting new one
       setResponse(null);
@@ -906,15 +925,23 @@
     };
 
     const clearConversation = () => {
+      console.log('🧹 Clearing conversation');
+      
       // Clear conversation history
       setConversationHistory([]);
+      
+      // Reset all refs
       savedMessageIdsRef.current.clear();
       currentMessageIdRef.current = null;
-      localStorage.removeItem('safety-copilot-conversation');
+      isSavingRef.current = false;
+      messageCounterRef.current = 0;
       
-      // Clear current message state
-      setCurrentQuestion("");
-      setCurrentAnalysis("");
+      // Clear localStorage
+      try {
+        localStorage.removeItem('safety-copilot-conversation');
+      } catch (err) {
+        console.error('Failed to clear localStorage:', err);
+      }
       setFinalAnswer("");
       setDebouncedAnalysis("");
       setResponse(null);
