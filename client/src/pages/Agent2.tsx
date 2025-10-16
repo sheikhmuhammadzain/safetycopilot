@@ -910,18 +910,24 @@
     };
 
     const handlePickQuery = async (q: string, d: 'incident' | 'hazard' | 'audit' | 'inspection' | 'all') => {
+      console.log('📖 Query book selection:', { question: q, dataset: d });
+      
       try {
         await navigator.clipboard.writeText(q);
       } catch (err) {
         // Non-fatal
       }
+      
+      // Close dialog first
+      setQueriesOpen(false);
+      
+      // Update input state (will be cleared by startWebSocketStreaming)
       setQuestion(q);
       setDataset(d);
-      setQueriesOpen(false);
-      // Query auto-runs, no toast needed
-      startWebSocketStreaming(q, d);
       
-      // No forced scroll; keep natural chat position
+      // Start streaming with the query - using parameters directly
+      // This bypasses state to avoid any timing issues
+      startWebSocketStreaming(q, d);
     };
 
     const clearConversation = () => {
