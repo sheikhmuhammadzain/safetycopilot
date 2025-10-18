@@ -435,6 +435,7 @@
       response: AgentResponse | null;
       timestamp: number;
     }>>({});
+    const conversationHistoryRef = useRef<ConversationMessage[]>([]);
 
     /**
      * Get recent conversation context for agent memory (last N messages)
@@ -493,18 +494,22 @@
   // Save message to history when streaming completes (buffer-aware)
   useEffect(() => {
     if (!isStreaming && currentMessageIdRef.current) {
+      // Persist synchronously before any other state clearing can hide the UI
       persistFromBuffer(currentMessageIdRef.current);
+      // Also flush to storage immediately
+      flushConversationToStorage(true);
     }
   }, [isStreaming]);
 
-    // Load conversation from localStorage on mount
+  // Load conversation from localStorage on mount
     useEffect(() => {
       try {
         const saved = localStorage.getItem('safety-copilot-conversation');
         if (saved) {
-          const parsed = JSON.parse(saved);
-          // Migrate old messages without IDs
-          const migrated = parsed.map((m: any, idx: number) => ({
+        const parsedRaw = JSON.parse(saved);
+        const parsed: any[] = Array.isArray(parsedRaw) ? parsedRaw : (parsedRaw ? [parsedRaw] : []);
+        // Migrate old messages without IDs
+        const migrated = parsed.map((m: any, idx: number) => ({
             ...m,
             id: m.id || `msg_${m.timestamp}_${idx}_${Math.random().toString(36).substr(2, 9)}`,
           }));
@@ -522,46 +527,141 @@
       }
     }, []);
 
-    // Save conversation to localStorage whenever it changes
+  // Save conversation to localStorage whenever it changes
     useEffect(() => {
-      if (conversationHistory.length > 0) {
-        try {
-          localStorage.setItem('safety-copilot-conversation', JSON.stringify(conversationHistory));
-        } catch (err) {
-          console.error('Failed to save conversation:', err);
+      conversationHistoryRef.current = conversationHistory;
+      // Merge-save without forcing pending buffer
+      flushConversationToStorage(false);
+    }, [conversationHistory]);
+
+  // Flush conversation (optionally including current pending message) to localStorage
+  const flushConversationToStorage = (includePending: boolean = true) => {
+    try {
+      const items: ConversationMessage[] = [...conversationHistoryRef.current];
+      if (includePending) {
+        const id = currentMessageIdRef.current || undefined;
+        if (id && !savedMessageIdsRef.current.has(id)) {
+          const buf = messageBuffersRef.current[id];
+          if (buf) {
+            const pending: ConversationMessage = {
+              id,
+              question: buf.question || currentQuestion,
+              dataset: buf.dataset || currentDataset,
+              toolCalls: buf.toolCalls || [],
+              analysis: buf.analysis || currentAnalysis || finalAnswer || "",
+              response: buf.response || null,
+              timestamp: buf.timestamp || Date.now(),
+            };
+            if (!items.some(m => m.id === id)) {
+              items.push(pending);
+            }
+          }
         }
       }
-    }, [conversationHistory]);
+      // Merge with existing storage to avoid accidental truncation
+      let existing: ConversationMessage[] = [];
+      try {
+        const saved = localStorage.getItem('safety-copilot-conversation');
+        if (saved) {
+          const parsedRaw = JSON.parse(saved);
+          existing = Array.isArray(parsedRaw) ? parsedRaw : (parsedRaw ? [parsedRaw] : []);
+        }
+      } catch {}
+      const byId: Record<string, ConversationMessage> = {};
+      for (const m of existing) {
+        if (m && m.id) byId[m.id] = m as ConversationMessage;
+      }
+      for (const m of items) {
+        if (m && m.id) byId[m.id] = m;
+      }
+      const merged = Object.values(byId).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      localStorage.setItem('safety-copilot-conversation', JSON.stringify(merged));
+    } catch (e) {
+      console.error('Failed to flush conversation:', e);
+    }
+  };
+
+  // Persist on tab change/unload and unmount
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) {
+        flushConversationToStorage(true);
+      }
+    };
+    const onPageHide = () => flushConversationToStorage(true);
+    const onBeforeUnload = () => flushConversationToStorage(true);
+    window.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      flushConversationToStorage(true);
+      window.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, []);
 
   // Persist a single message safely using its stable ID (avoids ref races)
   const persistMessage = (message: ConversationMessage) => {
     const { id } = message;
     if (!id) return;
-    if (savedMessageIdsRef.current.has(id)) {
-      return;
-    }
-    savedMessageIdsRef.current.add(id);
+    // Allow upsert to enrich, but avoid degrading existing content
     setConversationHistory(prev => {
-      if (prev.some(m => m.id === id)) {
-        return prev;
+      const idx = prev.findIndex(m => m.id === id);
+      if (idx >= 0) {
+        const existing = prev[idx];
+        const chooseAnalysis = () => {
+          const a = (existing.analysis || '').trim();
+          const b = (message.analysis || '').trim();
+          // Prefer longer non-placeholder text
+          const isPlaceholder = (s: string) => s === '' || s === 'Analysis complete.';
+          if (!isPlaceholder(b) && (b.length >= a.length)) return b;
+          return a || b; // fallback
+        };
+        const chooseToolCalls = () => {
+          const a = Array.isArray(existing.toolCalls) ? existing.toolCalls : [];
+          const b = Array.isArray(message.toolCalls) ? message.toolCalls : [];
+          return b.length >= a.length ? b : a;
+        };
+        const chooseResponse = () => {
+          const a = existing.response;
+          const b = message.response;
+          // Prefer non-null and with more keys
+          const size = (r: any) => (r && typeof r === 'object') ? Object.keys(r).length : 0;
+          return size(b) >= size(a) ? (b || a) : a;
+        };
+        const merged: ConversationMessage = {
+          ...existing,
+          id: existing.id,
+          question: message.question || existing.question,
+          dataset: message.dataset || existing.dataset,
+          toolCalls: chooseToolCalls(),
+          analysis: chooseAnalysis(),
+          response: chooseResponse(),
+          timestamp: existing.timestamp || message.timestamp || Date.now(),
+        } as ConversationMessage;
+        const copy = prev.slice();
+        copy[idx] = merged;
+        return copy;
       }
       return [...prev, message];
     });
+    savedMessageIdsRef.current.add(id);
   };
 
   const persistFromBuffer = (id?: string) => {
     const messageId = id || currentMessageIdRef.current;
     if (!messageId) return;
-    if (savedMessageIdsRef.current.has(messageId)) return;
     const buf = messageBuffersRef.current[messageId];
+    const analysisCandidate = (buf && buf.analysis && buf.analysis.length > 0)
+      ? buf.analysis
+      : (currentAnalysis || finalAnswer || response?.analysis || response?.answer || "");
     const messageToSave: ConversationMessage = {
       id: messageId,
       question: buf?.question || currentQuestion,
       dataset: buf?.dataset || currentDataset,
       toolCalls: buf?.toolCalls || toolCalls.slice(),
-      analysis: (buf && buf.analysis && buf.analysis.length > 0)
-        ? buf.analysis
-        : (currentAnalysis || finalAnswer || response?.analysis || response?.answer || ""),
+      analysis: analysisCandidate && analysisCandidate.length > 0 ? analysisCandidate : "Analysis complete.",
       response: buf?.response || response || null,
       timestamp: buf?.timestamp || Date.now(),
     };
@@ -785,6 +885,14 @@
                 setCurrentAnalysis(responseText);
                 setFinalAnswer(responseText);
               }
+              // buffer final content
+              const buf = messageBuffersRef.current[messageId];
+              if (buf) {
+                buf.response = data.data as AgentResponse;
+                if (responseText && (!buf.analysis || buf.analysis.length === 0)) {
+                  buf.analysis = responseText;
+                }
+              }
             }
             
             // Fallback: if no data.data but we have content in the main data object
@@ -803,13 +911,21 @@
                 setCurrentAnalysis((data as any).answer);
                 setFinalAnswer((data as any).answer);
               }
+              const buf = messageBuffersRef.current[messageId];
+              if (buf) {
+                buf.response = fallbackResponse;
+                if (!buf.analysis || buf.analysis.length === 0) {
+                  buf.analysis = (data as any).answer;
+                }
+              }
             }
             
             setIsStreaming(false);
             setLoading(false);
             receivedAnswerTokensRef.current = false;
-            // Slight delay to allow React to flush state before closing
-            setTimeout(() => ws.close(), 20);
+              // Persist buffer and close immediately
+              try { persistFromBuffer(messageId); flushConversationToStorage(true); } catch {}
+              ws.close();
             // Do not immediately clear UI state; hide live container only after auto-save
             // Do not auto-scroll on completion to keep the experience natural
           }
@@ -836,7 +952,7 @@
           setCurrentAnalysis('The connection ended unexpectedly, but tool results above may contain partial data.');
         }
         // Persist whatever we have (at least the user's question) to history
-        try { persistFromBuffer(messageId); } catch {}
+        try { persistFromBuffer(messageId); flushConversationToStorage(true); } catch {}
       };
 
       ws.onclose = (event) => {
@@ -848,7 +964,7 @@
           console.error('WebSocket closed abnormally:', event.code);
         }
         // Persist partial conversation if not already saved
-        try { persistFromBuffer(messageId); } catch {}
+        try { persistFromBuffer(messageId); flushConversationToStorage(true); } catch {}
         // If many tool calls prevented answer finalize, try to synthesize from what we have
         if (!finalAnswer && !currentAnalysis && toolCalls.length > 0) {
           try {
@@ -1624,7 +1740,7 @@
                 </div>
               ))}
               
-              {/* Current User Question */}
+              {/* Current User Question: keep visible until saved */}
               {currentQuestion && !currentSaved && (
                 <div className="flex justify-end">
                   <div className="bg-primary text-primary-foreground rounded-2xl px-5 py-3 max-w-2xl">
