@@ -9,10 +9,11 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
+import re
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import JSONResponse
 
-from ..services.excel import get_incident_df, get_hazard_df, get_audit_df, get_inspection_df
+from ..services.excel import get_incident_df, get_hazard_df, get_audit_df, get_inspection_df, load_default_sheets
 from ..services.json_utils import to_native_json
 
 
@@ -152,173 +153,373 @@ def _calculate_near_miss_ratio(incidents_df: pd.DataFrame, hazards_df: pd.DataFr
 
 # ======================= HEINRICH'S SAFETY PYRAMID =======================
 
+def _classify_heinrich_level(row: pd.Series) -> tuple:
+    """
+    Classify incident into Heinrich pyramid level based on consequence severity.
+    
+    Returns:
+        tuple: (level, description)
+        - Level 1: Fatalities (C4-C5 Injuries)
+        - Level 2: Serious Injuries (C3)
+        - Level 3: Minor Injuries (C1-C2)
+        - Level 4: Near Misses (C0 actual with C3-C5 worst)
+        - Level 5: Unsafe Conditions (from hazards/audits)
+    """
+    actual = str(row.get('actual_consequence_incident', '')).strip()
+    worst = str(row.get('worst_case_consequence_incident', '')).strip()
+    inc_type = str(row.get('incident_type', '')).lower().strip()
+    
+    # Level 1: Fatalities (C4-C5 Injuries)
+    if 'injury' in inc_type and any(x in actual for x in ['C4', 'C5', 'c4', 'c5', 'Major', 'Catastrophic']):
+        return (1, 'Fatalities (C4 and C5 Injuries)')
+    
+    # Level 2: Serious Injuries (C3)
+    if 'injury' in inc_type and any(x in actual for x in ['C3', 'c3', 'Severe']):
+        return (2, 'Serious Injuries (C3)')
+    
+    # Level 3: Minor Injuries (C1-C2)
+    if 'injury' in inc_type and any(x in actual for x in ['C1', 'C2', 'c1', 'c2', 'Minor', 'Serious']):
+        return (3, 'Minor Injuries (C1 and C2)')
+    
+    # Level 4: Near Misses (C0 actual with C3-C5 worst)
+    if any(x in actual for x in ['C0', 'c0']) and any(x in worst for x in ['C3', 'C4', 'C5', 'c3', 'c4', 'c5']):
+        return (4, 'Near Misses (C0 actual, C3 to C5 worst)')
+    
+    return (None, None)
+
+
 @router.get("/heinrich-pyramid")
-async def heinrich_safety_pyramid(
-    start_date: Optional[str] = Query(None, description="Filter start date (YYYY-MM-DD)", example="2024-01-01"),
-    end_date: Optional[str] = Query(None, description="Filter end date (YYYY-MM-DD)", example="2024-12-31"),
-    location: Optional[str] = Query(None, description="Filter by location", example="Karachi"),
-    department: Optional[str] = Query(None, description="Filter by department", example="Process"),
-):
+async def heinrich_safety_pyramid():
     """
-    Heinrich's Safety Pyramid aligned to the provided tiers and names:
-    - 1: Fatality
-    - 30: Lost Workday Cases
-    - 300: Recordable Injuries
-    - 3,000: Near Misses (estimated)
-    - 300,000: At-Risk Behaviors (estimated)
-
-    Calculation (from your data):
-    - Fatality: incidents whose consequence mentions 'fatal' OR highest severity (fallback)
-    - Lost Workday Cases: incidents with severity_score >= 3 (LTIR logic), excluding fatalities
-    - Recordable Injuries: incidents with severity_score >= 2 (TRIR logic), excluding lost-time and fatalities
-    - Near Misses (estimated): hazards count + incidents with incident_type containing 'near miss'
-    - At-Risk Behaviors (estimated): non-null findings in audits and inspections
-
-    We also compute Heinrich-expected counts using the 1:30:300:3000:300000 ratio anchored on the
-    top-most available actual tier (prefer Fatalities; fallback to Lost Workday, then Recordable).
+    Heinrich's Safety Pyramid - exact implementation matching reference logic.
     """
-    inc_df = get_incident_df()
-    haz_df = get_hazard_df()
-    aud_df = get_audit_df()
-    insp_df = get_inspection_df()
+    # Load sheets directly by name (matching test script)
+    sheets = load_default_sheets()
+    incident_df = sheets.get('Incident')
+    hazard_df = sheets.get('Hazard ID')
+    audit_df = sheets.get('Audit Findings')
     
-    # Apply filters
-    inc_df = _apply_filters(inc_df, start_date, end_date, location, department)
-    haz_df = _apply_filters(haz_df, start_date, end_date, location, department)
+    # Clean column names (strip only)
+    for df in [incident_df, hazard_df, audit_df]:
+        if df is not None and not df.empty:
+            df.columns = df.columns.str.strip()
     
-    # ---------- Derive actual tier counts from data ----------
-    tiers = {
-        "Fatality": 0,
-        "Lost Workday Cases": 0,
-        "Recordable Injuries": 0,
-        "Near Misses (estimated)": 0,
-        "At-Risk Behaviors (estimated)": 0,
-    }
+    # Classification function for incidents (exact match to reference)
+    def classify_heinrich_level(row):
+        actual = str(row.get('Actual Consequence (Incident)', '')).strip()
+        worst = str(row.get('Worst Case Consequence (Incident)', '')).strip()
+        inc_type = str(row.get('Incident Type(s)', '')).lower().strip()
 
-    # Incidents mapping
-    if inc_df is not None and not inc_df.empty:
-        sev_col = _resolve_column(inc_df, ["severity_score", "severity"])  # numeric preferred
-        act_cons = _resolve_column(inc_df, ["actual_consequence_incident"])  # text consequence
-        worst_cons = _resolve_column(inc_df, ["worst_case_consequence_incident"])  # fallback text
-        type_col = _resolve_column(inc_df, ["incident_type", "category"])  # near miss text
-
-        # Fatalities by explicit text OR highest severity bucket
-        fat_mask = pd.Series([False] * len(inc_df))
-        if act_cons and act_cons in inc_df.columns:
-            fat_mask |= inc_df[act_cons].astype(str).str.contains("fatal", case=False, na=False)
-        if worst_cons and worst_cons in inc_df.columns:
-            fat_mask |= inc_df[worst_cons].astype(str).str.contains("fatal", case=False, na=False)
-        if sev_col and sev_col in inc_df.columns:
-            sev_vals = pd.to_numeric(inc_df[sev_col], errors="coerce")
-            # If scale is 0-5, consider 5 as fatal proxy; if 0-4, consider >=4
-            max_val = sev_vals.max(skipna=True)
-            if pd.notna(max_val):
-                thr = 5 if max_val >= 5 else 4
-                fat_mask |= sev_vals >= thr
-        tiers["Fatality"] = int(fat_mask.sum())
-
-        # Lost Workday Cases: severity >= 3 (exclude fatalities)
-        lti_mask = pd.Series([False] * len(inc_df))
-        if sev_col and sev_col in inc_df.columns:
-            sev_vals = pd.to_numeric(inc_df[sev_col], errors="coerce")
-            lti_mask = sev_vals >= 3
-        if lti_mask.any():
-            lti_mask &= ~fat_mask
-        tiers["Lost Workday Cases"] = int(lti_mask.sum())
-
-        # Recordable Injuries: severity >= 2 (exclude lost-time and fatalities)
-        rec_mask = pd.Series([False] * len(inc_df))
-        if sev_col and sev_col in inc_df.columns:
-            sev_vals = pd.to_numeric(inc_df[sev_col], errors="coerce")
-            rec_mask = sev_vals >= 2
-        if rec_mask.any():
-            rec_mask &= ~(lti_mask | fat_mask)
-        tiers["Recordable Injuries"] = int(rec_mask.sum())
-
-        # Near-miss incidents text
-        inc_near = 0
-        if type_col and type_col in inc_df.columns:
-            inc_near = int(inc_df[type_col].astype(str).str.contains("near miss|near-miss|nearmiss", case=False, na=False).sum())
+        if inc_type == 'injury' and actual in ['C4 - Major', 'C5 - Catastrophic']:
+            return 1, 'Fatality (C4–C5 Injury)'
+        elif inc_type == 'injury' and actual == 'C3 - Severe':
+            return 2, 'Serious Injury (C3)'
+        elif inc_type == 'injury' and actual in ['C1 - Minor', 'C2 - Serious']:
+            return 3, 'Minor Injury (C1–C2)'
+        elif actual.startswith('C0') and any(x in worst for x in ['C3', 'C4', 'C5']):
+            return 4, 'Near Miss (C0 actual, C3–C5 worst)'
+        return None, None
+    
+    # Apply classification to incidents
+    if incident_df is not None and not incident_df.empty:
+        incident_df[['Heinrich_Level', 'Heinrich_Desc']] = incident_df.apply(
+            classify_heinrich_level, axis=1, result_type='expand'
+        )
+    
+    # Hazards as Unsafe Conditions
+    if hazard_df is not None and not hazard_df.empty:
+        def _is_hazard_level5(x):
+            val = str(x).strip()
+            # Exact match including case variations
+            return val in ['C1 - Minor', 'C2 - Serious']
+        
+        hazard_df['Heinrich_Level'] = hazard_df['Worst Case Consequence Potential (Hazard ID)'].apply(
+            lambda x: 5 if _is_hazard_level5(x) else None
+        )
+        hazard_df['Heinrich_Desc'] = hazard_df['Heinrich_Level'].apply(
+            lambda x: 'Unsafe Condition (Hazard)' if x == 5 else None
+        )
+    
+    # Audits as Unsafe Conditions (Level 5)
+    if audit_df is not None and not audit_df.empty:
+        def _is_audit_level5(x):
+            val = str(x).strip()
+            # Check if string contains C1 - Minor or C2 - Serious (handles semicolon-separated values)
+            return 'C1 - Minor' in val or 'C2 - Serious' in val
+        
+        audit_df['Heinrich_Level'] = audit_df['Worst Case Consequence'].apply(
+            lambda x: 5 if _is_audit_level5(x) else None
+        )
+        audit_df['Heinrich_Desc'] = audit_df['Heinrich_Level'].apply(
+            lambda x: 'Unsafe Condition (Audit)' if x == 5 else None
+        )
+    
+    # Combine all data (exact approach from reference)
+    combined = pd.concat([
+        incident_df.dropna(subset=['Heinrich_Level'])[['Heinrich_Level', 'Heinrich_Desc']] if incident_df is not None else pd.DataFrame(),
+        hazard_df.dropna(subset=['Heinrich_Level'])[['Heinrich_Level', 'Heinrich_Desc']] if hazard_df is not None else pd.DataFrame(),
+        audit_df.dropna(subset=['Heinrich_Level'])[['Heinrich_Level', 'Heinrich_Desc']] if audit_df is not None else pd.DataFrame()
+    ], ignore_index=True)
+    
+    # Predefine all levels with zero counts (red to green safety gradient)
+    all_levels = pd.DataFrame({
+        'Heinrich_Level': [1, 2, 3, 4, 5],
+        'Description': [
+            'Fatalities (C4 and C5 Injuries)',
+            'Serious Injuries (C3)',
+            'Minor Injuries (C1 and C2)',
+            'Near Misses (C0 actual, C3 to C5 worst)',
+            'Unsafe Conditions (Hazards + Audit Findings)'
+        ],
+        'Color_Code': ['#DC3545', '#FD7E14', '#FFC107', '#28A745', '#20C997']
+    })
+    
+    # Summarize actual counts
+    if not combined.empty:
+        heinrich_summary = (
+            combined.groupby('Heinrich_Level')
+            .size()
+            .reset_index(name='Count')
+            .sort_values('Heinrich_Level')
+        )
     else:
-        inc_near = 0
-
-    # Hazards as near misses
-    haz_count = 0
-    if haz_df is not None and not haz_df.empty:
-        haz_count = int(len(haz_df))
-    tiers["Near Misses (estimated)"] = int(haz_count + inc_near)
-
-    # At-risk behaviors from audits and inspections (non-null findings)
-    at_risk = 0
-    if aud_df is not None and not aud_df.empty:
-        fcol = _resolve_column(aud_df, ["finding", "findings"]) or None
-        if fcol:
-            at_risk += int(aud_df[fcol].notna().sum())
-        else:
-            at_risk += int(len(aud_df))
-    if insp_df is not None and not insp_df.empty:
-        fcol = _resolve_column(insp_df, ["finding", "findings"]) or None
-        if fcol:
-            at_risk += int(insp_df[fcol].notna().sum())
-        else:
-            at_risk += int(len(insp_df))
-    tiers["At-Risk Behaviors (estimated)"] = at_risk
-
-    # ---------- Heinrich expected counts (projection) ----------
-    # Try to anchor on Fatality; fallback to Lost Workday, then Recordable.
-    base = tiers["Fatality"]
-    anchor = "Fatality"
-    ratio = {
-        "Fatality": 1,
-        "Lost Workday Cases": 30,
-        "Recordable Injuries": 300,
-        "Near Misses (estimated)": 3000,
-        "At-Risk Behaviors (estimated)": 300000,
-    }
-    if base == 0:
-        if tiers["Lost Workday Cases"] > 0:
-            base = tiers["Lost Workday Cases"] / ratio["Lost Workday Cases"]
-            anchor = "Lost Workday Cases"
-        elif tiers["Recordable Injuries"] > 0:
-            base = tiers["Recordable Injuries"] / ratio["Recordable Injuries"]
-            anchor = "Recordable Injuries"
-        else:
-            base = 0
-
-    expected = {k: (int(round(base * v)) if base else 0) for k, v in ratio.items()}
-
-    # ---------- Build response ----------
-    order = ["Fatality", "Lost Workday Cases", "Recordable Injuries", "Near Misses (estimated)", "At-Risk Behaviors (estimated)"]
-    colors = ["#616161", "#9e9e9e", "#a3d977", "#7cc7c3", "#7fbf7f"]
-    layers = []
-    for i, label in enumerate(order):
-        layers.append({
-            "level": len(order) - i,  # 5 = top, 1 = bottom
-            "label": label,
-            "count": int(tiers[label]),
-            "heinrich_expected": int(expected[label]),
-            "anchor": anchor if i == 0 else None,
-            "color": colors[i],
-        })
+        heinrich_summary = pd.DataFrame(columns=['Heinrich_Level', 'Count'])
     
-    return JSONResponse(content=to_native_json({
-        "layers": layers,
-        "totals": {
-            "fatalities": tiers["Fatality"],
-            "lost_workday_cases": tiers["Lost Workday Cases"],
-            "recordable_injuries": tiers["Recordable Injuries"],
-            "near_misses": tiers["Near Misses (estimated)"],
-            "at_risk_behaviors": tiers["At-Risk Behaviors (estimated)"],
-        },
-        "heinrich_expected": expected,
-        "near_miss_ratio": _calculate_near_miss_ratio(inc_df, haz_df),
-        "filters_applied": {
-            "start_date": start_date,
-            "end_date": end_date,
-            "location": location,
-            "department": department,
-        }
-    }))
+    # Merge with all levels, filling missing counts with 0
+    heinrich_summary = all_levels.merge(heinrich_summary, on='Heinrich_Level', how='left').fillna({'Count': 0})
+    
+    # Calculate percentages
+    total = heinrich_summary['Count'].sum()
+    if total > 0:
+        heinrich_summary['Percent'] = (heinrich_summary['Count'] / total * 100).round(1)
+    else:
+        heinrich_summary['Percent'] = 0.0
+    
+    # Convert to JSON-style list (exact output format)
+    result = heinrich_summary.to_dict(orient='records')
+    
+    return JSONResponse(content=to_native_json(result))
+
+
+@router.get("/hse-metrics")
+async def hse_metrics():
+    """
+    Calculate HSE metrics including incidents, near-miss ratio, and injury statistics.
+    """
+    # Load sheets directly by name
+    sheets = load_default_sheets()
+    incident_df = sheets.get('Incident')
+    hazard_df = sheets.get('Hazard ID')
+    audit_df = sheets.get('Audit Findings')
+    
+    # Clean column names
+    for df in [incident_df, hazard_df, audit_df]:
+        if df is not None and not df.empty:
+            df.columns = df.columns.str.strip()
+    
+    # Initialize metrics
+    fatalities = 0
+    serious_injuries = 0
+    recordable_injuries = 0
+    near_misses = 0
+    at_risk_behaviors = 0
+    total_incidents = 0
+    injuries_total = 0
+    
+    # Calculate from incidents
+    if incident_df is not None and not incident_df.empty:
+        total_incidents = len(incident_df)
+        
+        # Filter injuries
+        injuries = incident_df[
+            incident_df['Incident Type(s)'].str.lower().str.strip() == 'injury'
+        ]
+        injuries_total = len(injuries)
+        
+        # Fatalities (C4-C5)
+        fatalities = len(injuries[
+            injuries['Actual Consequence (Incident)'].isin(['C4 - Major', 'C5 - Catastrophic'])
+        ])
+        
+        # Serious Injuries (C3)
+        serious_injuries = len(injuries[
+            injuries['Actual Consequence (Incident)'] == 'C3 - Severe'
+        ])
+        
+        # Recordable Injuries (C2-C5)
+        recordable_injuries = len(injuries[
+            injuries['Actual Consequence (Incident)'].isin(['C2 - Serious', 'C3 - Severe', 'C4 - Major', 'C5 - Catastrophic'])
+        ])
+        
+        # Near Misses (C0 actual with C3-C5 worst)
+        near_misses = len(incident_df[
+            (incident_df['Actual Consequence (Incident)'].astype(str).str.startswith('C0', na=False)) &
+            (incident_df['Worst Case Consequence (Incident)'].astype(str).str.contains('C3|C4|C5', na=False))
+        ])
+    
+    # Calculate at-risk behaviors (Unsafe Conditions)
+    if hazard_df is not None and not hazard_df.empty:
+        at_risk_behaviors += len(hazard_df[
+            hazard_df['Worst Case Consequence Potential (Hazard ID)'].astype(str).str.strip().isin(['C1 - Minor', 'C2 - Serious'])
+        ])
+    
+    if audit_df is not None and not audit_df.empty:
+        at_risk_behaviors += len(audit_df[
+            audit_df['Worst Case Consequence'].astype(str).str.strip().isin(['C1 - Minor', 'C2 - Serious'])
+        ])
+    
+    # Calculate near-miss ratio
+    near_miss_ratio = f"{near_misses / injuries_total:.2f}:1" if injuries_total > 0 else "N/A"
+    
+    result = {
+        "total_incidents": total_incidents,
+        "near_miss_ratio": near_miss_ratio,
+        "fatality_actual": fatalities,
+        "lost_workday_cases_actual": serious_injuries,
+        "recordable_injuries_actual": recordable_injuries,
+        "near_misses_actual": near_misses,
+        "unsafe_condition": at_risk_behaviors,
+    }
+    
+    return JSONResponse(content=to_native_json(result))
+
+
+@router.get("/injury-risk-by-department")
+async def injury_risk_by_department():
+    """
+    Compute ISO 45001-style injury risk per Department using exact column names:
+    - Filter Incidents where 'Incident Type(s)' == 'injury'
+    - Severity mapping to scores (C0..C5)
+    - Likelihood from department injury count quintiles (1..5)
+    - Risk_Score = (0.8 * Sum_Actual_Severity + 0.2 * Sum_Worst_Severity) * Likelihood
+    - Normalized_Score = min-max normalization of Risk_Score
+
+    Returns shape compatible with ShadcnBarCard:
+    { labels: string[], series: [{name, data}...], table: [...], meta: {...} }
+    """
+    sheets = load_default_sheets()
+    inc = sheets.get('Incident')
+    if inc is None or inc.empty:
+        return JSONResponse(content=to_native_json({
+            "labels": [],
+            "series": [],
+            "table": [],
+            "meta": {"records_used": 0, "sheet": 'Incident'}
+        }))
+
+    # Strip column names and values
+    inc = inc.copy()
+    inc.columns = inc.columns.str.strip()
+
+    # Ensure required columns exist
+    required_cols = [
+        'Incident Number',
+        'Incident Type(s)',
+        'Actual Consequence (Incident)',
+        'Worst Case Consequence (Incident)',
+        'Department',
+    ]
+    for c in required_cols:
+        if c not in inc.columns:
+            # Try to resolve by case-insensitive match
+            matches = [col for col in inc.columns if str(col).strip().lower() == c.lower()]
+            if matches:
+                inc.rename(columns={matches[0]: c}, inplace=True)
+
+    # Filter injuries
+    injuries_df = inc[
+        inc['Incident Number'].notna()
+        & inc['Incident Type(s)'].notna()
+        & (inc['Incident Type(s)'].astype(str).str.strip().str.lower() == 'injury')
+    ].copy()
+
+    if injuries_df.empty:
+        return JSONResponse(content=to_native_json({
+            "labels": [],
+            "series": [],
+            "table": [],
+            "meta": {"records_used": 0, "sheet": 'Incident'}
+        }))
+
+    # ISO 45001-based severity scores
+    severity_scores = {
+        'C0 - No Ill Effect': 1,
+        'C1 - Minor': 2,
+        'C2 - Serious': 3,
+        'C3 - Severe': 4,
+        'C4 - Major': 5,
+        'C5 - Catastrophic': 5,
+    }
+
+    injuries_df['Department'] = injuries_df['Department'].astype(str).replace({'': 'Unknown', 'nan': 'Unknown'})
+
+    injuries_df['Actual_Severity'] = injuries_df['Actual Consequence (Incident)'].map(severity_scores).fillna(0)
+    injuries_df['Worst_Severity'] = injuries_df['Worst Case Consequence (Incident)'].map(severity_scores).fillna(0)
+
+    # Injury counts per department -> Likelihood quintiles
+    injury_counts = injuries_df.groupby('Department').size().reset_index(name='Injury_Count')
+    if len(injury_counts) > 1:
+        qs = injury_counts['Injury_Count'].quantile([0.2, 0.4, 0.6, 0.8]).values
+    else:
+        qs = [1, 1, 1, 1]
+
+    def assign_likelihood(count: float) -> int:
+        if count <= qs[0]:
+            return 1
+        elif count <= qs[1]:
+            return 2
+        elif count <= qs[2]:
+            return 3
+        elif count <= qs[3]:
+            return 4
+        else:
+            return 5
+
+    injury_counts['Likelihood'] = injury_counts['Injury_Count'].apply(assign_likelihood)
+
+    # Aggregate by department
+    dept_summary = injuries_df.groupby('Department').agg(
+        Injury_Count=('Incident Number', 'count'),
+        Sum_Actual_Severity=('Actual_Severity', 'sum'),
+        Sum_Worst_Severity=('Worst_Severity', 'sum'),
+    ).reset_index()
+
+    dept_summary = dept_summary.merge(injury_counts[['Department', 'Likelihood']], on='Department', how='left')
+
+    dept_summary['Risk_Score'] = (
+        0.8 * dept_summary['Sum_Actual_Severity'] + 0.2 * dept_summary['Sum_Worst_Severity']
+    ) * dept_summary['Likelihood']
+
+    # Normalization
+    min_score = float(dept_summary['Risk_Score'].min()) if len(dept_summary) else 0.0
+    max_score = float(dept_summary['Risk_Score'].max()) if len(dept_summary) else 0.0
+    if max_score != min_score:
+        dept_summary['Normalized_Score'] = (dept_summary['Risk_Score'] - min_score) / (max_score - min_score)
+    else:
+        dept_summary['Normalized_Score'] = 0.0
+
+    # Sort by normalized desc
+    dept_summary = dept_summary.sort_values(by='Normalized_Score', ascending=False)
+
+    labels = dept_summary['Department'].astype(str).tolist()
+    series = [
+        {"name": "Normalized Injury Risk Score", "data": dept_summary['Normalized_Score'].round(3).tolist()},
+        {"name": "Injury Risk Score", "data": dept_summary['Risk_Score'].round(3).tolist()},
+    ]
+
+    table = dept_summary[[
+        'Department', 'Injury_Count', 'Sum_Actual_Severity', 'Sum_Worst_Severity', 'Likelihood', 'Risk_Score', 'Normalized_Score'
+    ]].round(3).to_dict(orient='records')
+
+    payload = {
+        "labels": labels,
+        "x": labels,  # compat with other clients
+        "series": series,
+        "table": table,
+        "meta": {"records_used": int(len(injuries_df)), "sheet": 'Incident'},
+    }
+
+    return JSONResponse(content=to_native_json(payload))
 
 
 @router.get("/heinrich-pyramid-breakdown")

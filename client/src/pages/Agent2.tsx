@@ -427,6 +427,14 @@
     const receivedAnswerTokensRef = useRef<boolean>(false);
     const messageCounterRef = useRef<number>(0); // Counter for unique IDs
     const isSavingRef = useRef<boolean>(false); // Lock to prevent concurrent saves
+    const messageBuffersRef = useRef<Record<string, { 
+      question: string; 
+      dataset: string; 
+      toolCalls: ToolCall[]; 
+      analysis: string; 
+      response: AgentResponse | null;
+      timestamp: number;
+    }>>({});
 
     /**
      * Get recent conversation context for agent memory (last N messages)
@@ -482,76 +490,12 @@
     // Auto-scroll to bottom only when response completes (not during streaming)
     // Removed auto-scroll during streaming to prevent jittery behavior
 
-    // Save message to history when streaming completes
-    useEffect(() => {
-      // Only save when streaming stops and we have a message ID
-      if (!isStreaming && currentMessageIdRef.current && currentQuestion) {
-        const messageId = currentMessageIdRef.current;
-        
-        // Check if already saved
-        if (savedMessageIdsRef.current.has(messageId)) {
-          console.log('⏭️ Already saved:', messageId);
-          return;
-        }
-        
-        // Check if currently saving (prevent race condition)
-        if (isSavingRef.current) {
-          console.log('🔒 Save in progress, skipping:', messageId);
-          return;
-        }
-        
-        // Check if we have content to save
-        const hasContent = Boolean(
-          currentQuestion ||
-          currentAnalysis ||
-          finalAnswer ||
-          response?.analysis ||
-          response?.answer ||
-          toolCalls.length > 0
-        );
-        
-        if (!hasContent) {
-          console.log('⏭️ No content to save');
-          return;
-        }
-        
-        console.log('💾 Auto-saving message:', messageId);
-        
-        // Set saving lock
-        isSavingRef.current = true;
-        
-        // Mark as saved FIRST to prevent duplicate attempts
-        savedMessageIdsRef.current.add(messageId);
-        
-        // Capture current values to avoid stale closures
-        const messageToSave = {
-          id: messageId,
-          question: currentQuestion,
-          dataset: currentDataset,
-          toolCalls: toolCalls.slice(),
-          analysis: currentAnalysis || finalAnswer || response?.analysis || response?.answer || "",
-          response: response || null,
-          timestamp: Date.now(),
-        };
-        
-        // Save to history
-        setConversationHistory(prev => {
-          // Final check to prevent duplicate
-          if (prev.some(msg => msg.id === messageId)) {
-            console.log('⏭️ Message already in state, skipping:', messageId);
-            isSavingRef.current = false; // Release lock
-            return prev;
-          }
-          
-          console.log('✅ Saved message:', messageId);
-          isSavingRef.current = false; // Release lock
-          return [...prev, messageToSave];
-        });
-        
-        // Mark as saved AFTER state update (outside state updater)
-        setTimeout(() => setCurrentSaved(true), 0);
-      }
-    }, [isStreaming, currentQuestion]);
+  // Save message to history when streaming completes (buffer-aware)
+  useEffect(() => {
+    if (!isStreaming && currentMessageIdRef.current) {
+      persistFromBuffer(currentMessageIdRef.current);
+    }
+  }, [isStreaming]);
 
     // Load conversation from localStorage on mount
     useEffect(() => {
@@ -589,55 +533,48 @@
       }
     }, [conversationHistory]);
 
-    // Manual save function (only used in error handlers)
-    const saveCurrentMessageToHistory = () => {
-      const messageId = currentMessageIdRef.current;
-      if (!messageId) return;
-      
-      // Check if already saved
-      if (savedMessageIdsRef.current.has(messageId)) {
-        console.log('⏭️ Already saved (manual), skipping:', messageId);
-        return;
+  // Persist a single message safely using its stable ID (avoids ref races)
+  const persistMessage = (message: ConversationMessage) => {
+    const { id } = message;
+    if (!id) return;
+    if (savedMessageIdsRef.current.has(id)) {
+      return;
+    }
+    savedMessageIdsRef.current.add(id);
+    setConversationHistory(prev => {
+      if (prev.some(m => m.id === id)) {
+        return prev;
       }
-      
-      // Check saving lock
-      if (isSavingRef.current) {
-        console.log('🔒 Save in progress (manual), skipping:', messageId);
-        return;
-      }
-      
-      console.log('💾 Manual save:', messageId);
-      
-      isSavingRef.current = true;
-      savedMessageIdsRef.current.add(messageId);
-      
-      const analysisText = currentAnalysis || finalAnswer || response?.analysis || response?.answer || "";
-      const analysisToStore = analysisText || "Analysis complete.";
+      return [...prev, message];
+    });
+  };
 
-      setConversationHistory(prev => {
-        if (prev.some(msg => msg.id === messageId)) {
-          console.log('⏭️ Already in state (manual), skipping:', messageId);
-          isSavingRef.current = false;
-          return prev;
-        }
-        
-        isSavingRef.current = false;
-        return [
-          ...prev,
-          {
-            id: messageId,
-            question: currentQuestion,
-            dataset: currentDataset,
-            toolCalls: toolCalls.slice(),
-            analysis: analysisToStore,
-            response: response || null,
-            timestamp: Date.now(),
-          },
-        ];
-      });
-      
-      setTimeout(() => setCurrentSaved(true), 0);
+  const persistFromBuffer = (id?: string) => {
+    const messageId = id || currentMessageIdRef.current;
+    if (!messageId) return;
+    if (savedMessageIdsRef.current.has(messageId)) return;
+    const buf = messageBuffersRef.current[messageId];
+    const messageToSave: ConversationMessage = {
+      id: messageId,
+      question: buf?.question || currentQuestion,
+      dataset: buf?.dataset || currentDataset,
+      toolCalls: buf?.toolCalls || toolCalls.slice(),
+      analysis: (buf && buf.analysis && buf.analysis.length > 0)
+        ? buf.analysis
+        : (currentAnalysis || finalAnswer || response?.analysis || response?.answer || ""),
+      response: buf?.response || response || null,
+      timestamp: buf?.timestamp || Date.now(),
     };
+    persistMessage(messageToSave);
+    delete messageBuffersRef.current[messageId];
+    setCurrentSaved(true);
+  };
+
+  // Manual save function (only used in error handlers)
+  const saveCurrentMessageToHistory = () => {
+    const messageId = currentMessageIdRef.current || undefined;
+    persistFromBuffer(messageId);
+  };
 
     const startWebSocketStreaming = (overrideQuestion?: string, overrideDataset?: string) => {
       const q = (overrideQuestion ?? question).trim();
@@ -696,6 +633,16 @@
       const ws = new WebSocket(`${WS_BASE}/ws/agent/stream?${params}`);
       websocketRef.current = ws;
 
+      // Initialize per-message buffer
+      messageBuffersRef.current[messageId] = {
+        question: q,
+        dataset: d,
+        toolCalls: [],
+        analysis: "",
+        response: null,
+        timestamp: Date.now(),
+      };
+
       ws.onopen = () => {
         console.log('✅ WebSocket connected');
         console.log(`📝 Agent memory: ${recentContext.length} recent messages (limit: ${MEMORY_LIMIT})`);
@@ -722,6 +669,9 @@
             receivedAnswerTokensRef.current = true;
             setCurrentAnalysis(prev => (prev || "") + data.token!);
             setFinalAnswer(prev => (prev || "") + data.token!);
+            // buffer
+            const buf = messageBuffersRef.current[messageId];
+            if (buf) buf.analysis = (buf.analysis || "") + data.token!;
             return;
           }
           
@@ -747,6 +697,12 @@
                 timestamp: Date.now(),
               },
             ]);
+            // buffer
+            const buf = messageBuffersRef.current[messageId];
+            if (buf) buf.toolCalls = [
+              ...buf.toolCalls,
+              { tool: data.tool!, arguments: data.arguments!, timestamp: Date.now() }
+            ];
           }
           if (data.type === 'tool_result' && data.tool && data.result) {
             setToolCalls(prev =>
@@ -759,6 +715,14 @@
             // Ensure we have something to show while tools are busy
             if (!currentAnalysis && !finalAnswer) {
               setCurrentAnalysis(prev => prev || 'Working on your request…');
+            }
+            // buffer
+            const buf = messageBuffersRef.current[messageId];
+            if (buf) {
+              const parsed = (() => { try { return JSON.parse(data.result!); } catch { return data.result; } })();
+              buf.toolCalls = buf.toolCalls.map(tc =>
+                (!tc.result && tc.tool === data.tool) ? { ...tc, result: parsed } : tc
+              );
             }
           }
 
@@ -773,9 +737,13 @@
           // Data & analysis
           if (data.type === 'data_ready' && data.data) {
             setResponse(data.data);
+            const buf = messageBuffersRef.current[messageId];
+            if (buf) buf.response = data.data as AgentResponse;
           }
           if (data.type === 'analysis_chunk' && data.chunk) {
             setCurrentAnalysis(prev => (prev || "") + data.chunk);
+            const buf = messageBuffersRef.current[messageId];
+            if (buf) buf.analysis = (buf.analysis || "") + data.chunk;
           }
           // Final answer streaming support (robust to backend variations)
           if ((data.type === 'answer' || data.type === 'final_answer' || data.type === 'final') && data.content) {
@@ -787,6 +755,8 @@
               setFinalAnswer(prev => (prev || "") + data.content);
               setCurrentAnalysis(prev => (prev || "") + data.content);
             }
+            const buf = messageBuffersRef.current[messageId];
+            if (buf) buf.analysis = (buf.analysis || "") + data.content;
           }
           if ((data.type === 'answer_complete' || data.type === 'final_answer_complete') && data.content) {
             // If we already streamed tokens, prefer keeping the streamed content unless the
@@ -798,6 +768,8 @@
             // Clear thinking and reasoning text since we now have the final formatted answer
             setThinkingText("");
             setReasoningText("");
+            const buf = messageBuffersRef.current[messageId];
+            if (buf) buf.analysis = preferred;
           }
 
           // Completion
@@ -864,7 +836,7 @@
           setCurrentAnalysis('The connection ended unexpectedly, but tool results above may contain partial data.');
         }
         // Persist whatever we have (at least the user's question) to history
-        try { saveCurrentMessageToHistory(); } catch {}
+        try { persistFromBuffer(messageId); } catch {}
       };
 
       ws.onclose = (event) => {
@@ -876,7 +848,7 @@
           console.error('WebSocket closed abnormally:', event.code);
         }
         // Persist partial conversation if not already saved
-        try { saveCurrentMessageToHistory(); } catch {}
+        try { persistFromBuffer(messageId); } catch {}
         // If many tool calls prevented answer finalize, try to synthesize from what we have
         if (!finalAnswer && !currentAnalysis && toolCalls.length > 0) {
           try {
@@ -2447,7 +2419,7 @@
         {/* Fixed Input Bar - ChatGPT Style */}
         <div className="fixed bottom-0 left-0 md:left-[var(--sidebar-width)] group-data-[state=collapsed]/sidebar-wrapper:md:left-[var(--sidebar-width-icon)] right-0 bg-gradient-to-t from-background via-background to-background/80 backdrop-blur-sm transition-[left] duration-200 ease-in-out">
           <div className="max-w-4xl mx-auto px-4 pb-6 pt-4">
-            <div className="relative bg-background border border-border/80 rounded-3xl shadow-sm hover:shadow-xl transition-shadow duration-200">
+            <div className="relative bg-background border border-border/80 rounded-3xl shadow-sm hover:border-primary/80 transition-shadow duration-200">
               <form onSubmit={handleSubmit} className="flex items-center gap-2 p-2">
                 {/* Persona Selector */}
                 <Select value={persona} onValueChange={setPersona}>

@@ -129,22 +129,34 @@ export function useRiskTrend(filters: FilterParams, monthsAhead: number = 3, ref
 // Hook for Heinrich's Pyramid
 export function useHeinrichPyramid(filters: FilterParams, refreshKey?: number) {
   return useQuery({
-    queryKey: ["heinrich-pyramid", filters, refreshKey ?? 0],
+    queryKey: ["heinrich-pyramid", refreshKey ?? 0],
     queryFn: async () => {
-      const key = makeKey("/analytics/advanced/heinrich-pyramid", filters);
+      const key = makeKey("/analytics/advanced/heinrich-pyramid", {});
       if (!refreshKey) {
         const cached = getCache<any>(key);
         if (cached) return cached;
       }
-      const params = new URLSearchParams();
-      if (filters.startDate) params.append("start_date", filters.startDate);
-      if (filters.endDate) params.append("end_date", filters.endDate);
-      if (filters.location) params.append("location", filters.location);
-      if (filters.department) params.append("department", filters.department);
       
-      const response = await axios.get(`${API_BASE}/analytics/advanced/heinrich-pyramid?${params}`);
-      setCache(key, response.data, ADVANCED_ANALYTICS_TTL_MS);
-      return response.data;
+      // API no longer accepts filters - returns whole dataset
+      const response = await axios.get(`${API_BASE}/analytics/advanced/heinrich-pyramid`);
+      
+      // Transform new API format to match frontend expectations
+      // New format: [{Heinrich_Level, Description, Color_Code, Count, Percent}]
+      // Expected format: {layers: [{level, label, count, color, percent}]}
+      const transformedData = {
+        layers: response.data.map((layer: any) => ({
+          level: layer.Heinrich_Level,
+          label: layer.Description,
+          count: layer.Count,
+          color: layer.Color_Code,
+          percent: layer.Percent,
+          heinrich_expected: 0, // Not provided by new API
+          anchor: null, // Not provided by new API
+        })),
+      };
+      
+      setCache(key, transformedData, ADVANCED_ANALYTICS_TTL_MS);
+      return transformedData;
     },
     staleTime: Infinity,
     gcTime: Infinity,

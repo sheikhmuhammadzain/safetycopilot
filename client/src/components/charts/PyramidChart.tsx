@@ -18,8 +18,9 @@ export const PyramidChart: React.FC<PyramidChartProps> = ({ layers, totalEvents 
   const icons = [Skull, Bandage, Heart, ShieldAlert, Eye];
   const topWidth = 10; // Fixed top width for sharp triangle
   
-  // Sort layers by level (5 to 1, top to bottom)
-  const sortedLayers = [...layers].sort((a, b) => b.level - a.level);
+  // Sort layers by level (1 to 5, top to bottom)
+  // Level 1 (Fatalities) at top (narrow), Level 5 (Unsafe Conditions) at bottom (wide)
+  const sortedLayers = [...layers].sort((a, b) => a.level - b.level);
   
   return (
     <div className="relative w-full max-w-4xl mx-auto py-8">
@@ -79,7 +80,8 @@ export const PyramidChart: React.FC<PyramidChartProps> = ({ layers, totalEvents 
           const y1 = yPos;
           const y2 = yPos + layerHeight;
           
-          const Icon = icons[5 - layer.level];
+          // Map icons: Level 1 = Skull, Level 2 = Bandage, etc.
+          const Icon = icons[layer.level - 1];
           const isLeft = index % 2 === 0;
           
           return (
@@ -100,32 +102,45 @@ export const PyramidChart: React.FC<PyramidChartProps> = ({ layers, totalEvents 
               {/* Count text (Number - First) */}
               <text
                 x={centerX}
-                y={yPos + 38}
+                y={index === 0 ? yPos + 35 : yPos + 38}
                 textAnchor="middle"
                 className="fill-white font-extrabold"
-                style={{ fontSize: index === 0 ? '32px' : '42px', fontWeight: '900' }}
+                style={{ fontSize: index === 0 ? '28px' : '42px', fontWeight: '900' }}
               >
                 {layer.count}
               </text>
               
               {/* Label text (Text - Second) */}
-              <text
-                x={centerX}
-                y={yPos + 65}
-                textAnchor="middle"
-                className="fill-white font-bold"
-                style={{ fontSize: index === 0 ? '12px' : '19px', fontWeight: '700' }}
-              >
-                {layer.label}
-              </text>
+              {index === 0 ? (
+                <text
+                  x={centerX}
+                  y={yPos + 52}
+                  textAnchor="middle"
+                  className="fill-white font-bold"
+                  style={{ fontSize: '10px', fontWeight: '700' }}
+                >
+                  <tspan x={centerX} dy="0">Fatalities</tspan>
+                  <tspan x={centerX} dy="12">(C4 and C5 Injuries)</tspan>
+                </text>
+              ) : (
+                <text
+                  x={centerX}
+                  y={yPos + 65}
+                  textAnchor="middle"
+                  className="fill-white font-bold"
+                  style={{ fontSize: index === 1 ? '15px' : '16px', fontWeight: '700' }}
+                >
+                  {layer.label}
+                </text>
+              )}
               
               {/* Percentage indicator (Percentage - Third) */}
               <text
                 x={centerX}
-                y={yPos + 85}
+                y={index === 0 ? yPos + 82 : yPos + 85}
                 textAnchor="middle"
                 className="fill-white/90"
-                style={{ fontSize: index === 0 ? '11px' : '13px' }}
+                style={{ fontSize: index === 0 ? '9px' : '13px' }}
               >
                 {((layer.count / totalEvents) * 100).toFixed(1)}% of total
               </text>

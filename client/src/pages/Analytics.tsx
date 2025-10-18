@@ -24,6 +24,8 @@ import {
   useRiskTrend, 
   useHeinrichPyramid 
 } from "@/hooks/useAdvancedAnalytics";
+import { useHseMetrics } from "@/hooks/useHseMetrics";
+import { HseMetricsCard } from "@/components/analytics/HseMetricsCard";
 
 // API Base URL from environment variable
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
@@ -57,6 +59,7 @@ export default function Analytics() {
   const { data: leadingLagging, isLoading: leadingLoading, isError: leadingError, error: leadingErrorMsg } = useLeadingLagging(filters, refreshKey);
   const { data: riskTrend, isLoading: riskLoading, isError: riskError, error: riskErrorMsg } = useRiskTrend(filters, 3, refreshKey);
   const { data: heinrichData, isLoading: heinrichLoading, isError: heinrichError, error: heinrichErrorMsg } = useHeinrichPyramid(filters, refreshKey);
+  const { data: hseMetrics, loading: hseLoading, error: hseError } = useHseMetrics();
 
   // Fetch filter options
   const fetchFilterOptions = async () => {
@@ -696,7 +699,7 @@ export default function Analytics() {
                       Heinrich's Safety Pyramid
                     </CardTitle>
                     <CardDescription>
-                      Foundational safety analytics - Industry standard ratios (1:10:30:600:3000)
+                      Complete dataset analysis - Industry standard ratios (1:10:30:600:3000)
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
@@ -717,20 +720,17 @@ export default function Analytics() {
                           </Button>
                         </TooltipTrigger>
                       <TooltipContent className="max-w-sm">
-                        <p className="font-semibold mb-2">Heinrich's Safety Pyramid</p>
-                        <p className="text-sm mb-2">Shows the relationship between minor and major safety events.</p>
+                        <p className="font-semibold mb-2">Heinrich's Safety Pyramid (Customized for Our Model)</p>
+                        <p className="text-sm mb-2">Shows the relationship between minor and major safety events, emphasizing proactive prevention.</p>
                         <p className="text-sm mb-2"><strong>5 Levels (Top to Bottom):</strong></p>
                         <ul className="text-xs space-y-1 mb-2">
-                          <li>• <strong>Level 5:</strong> Serious Injury/Fatality (severity ≥ 4)</li>
-                          <li>• <strong>Level 4:</strong> Minor Injury (severity 2-3)</li>
-                          <li>• <strong>Level 3:</strong> First Aid/Near Miss (severity 1)</li>
-                          <li>• <strong>Level 2:</strong> Unsafe Conditions (hazards)</li>
-                          <li>• <strong>Level 1:</strong> At-Risk Behaviors (observations)</li>
+                          <li>• <strong>Level 1:</strong> Fatalities (C4–C5 Injuries)</li>
+                          <li>• <strong>Level 2:</strong> Serious Injuries (C3)</li>
+                          <li>• <strong>Level 3:</strong> Minor Injuries (C1–C2)</li>
+                          <li>• <strong>Level 4:</strong> Near Misses (C0 actual, C3–C5 worst case)</li>
+                          <li>• <strong>Level 5:</strong> Unsafe Conditions/At-Risk Behaviors (hazards, observations)</li>
                         </ul>
-                        <p className="text-sm font-mono bg-muted p-2 rounded mb-2">
-                          Industry Ratio: 1:10:30:600:3000
-                        </p>
-                        <p className="text-xs text-muted-foreground">For every serious injury, there are typically 10 minor injuries, 30 near-misses, etc.</p>
+                        <p className="text-xs text-muted-foreground">These tiers help focus on leading indicators to prevent severe outcomes.</p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -746,8 +746,7 @@ export default function Analytics() {
                     level: l.level,
                     label: l.label,
                     count: Number(l.count) || 0,
-                    // ratio not used by chart, set as realized vs expected if available
-                    ratio: l.heinrich_expected ? (Number(l.count) || 0) / Math.max(1, Number(l.heinrich_expected) || 1) : 0,
+                    ratio: 0, // Not used by chart
                     color: l.color || "#7fbf7f",
                   }));
 
@@ -755,43 +754,53 @@ export default function Analytics() {
                     <>
                       <PyramidChart layers={layersForChart} totalEvents={totalEvents} />
 
-                      {/* Stats and context */}
+                      {/* Stats */}
                       <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="p-4 bg-muted rounded-lg">
                           <span className="text-sm text-muted-foreground">Total Events</span>
                           <p className="text-2xl font-bold">{totalEvents}</p>
                         </div>
                         <div className="p-4 bg-muted rounded-lg">
-                          <span className="text-sm text-muted-foreground">Near-Miss Ratio</span>
-                          <p className="text-2xl font-bold">{heinrichData.near_miss_ratio}:1</p>
+                          <span className="text-sm text-muted-foreground">Data Coverage</span>
+                          <p className="text-2xl font-bold">Whole Dataset</p>
                         </div>
-                        {heinrichData.filters_applied && (
-                          <div className="p-4 bg-muted rounded-lg">
-                            <span className="text-sm text-muted-foreground block mb-2">Filters Applied</span>
-                            <div className="flex flex-wrap gap-1">
-                              {Object.entries(heinrichData.filters_applied).map(([k,v]: [string, any]) => (
-                                v ? <span key={k} className="text-xs px-2 py-1 rounded bg-background border">{k}: {String(v)}</span> : null
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                        <div className="p-4 bg-muted rounded-lg">
+                          <span className="text-sm text-muted-foreground">Industry Standard</span>
+                          <p className="text-sm font-medium mt-1">1:10:30:600:3000</p>
+                        </div>
                       </div>
 
-                      {/* Expected vs Actual per layer */}
+                      {/* Layer details */}
                       <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
                         {apiLayers.map((l: any, idx: number) => (
                           <div key={idx} className="p-3 rounded border flex items-center justify-between">
-                            <div>
-                              <p className="text-sm font-medium">{l.label}</p>
-                              <p className="text-xs text-muted-foreground">Expected: {l.heinrich_expected ?? '-'}{l.anchor ? ` • Anchor: ${l.anchor}` : ''}</p>
+                            <div className="flex items-center gap-3">
+                              <div className="w-4 h-4 rounded" style={{ backgroundColor: l.color }}></div>
+                              <div>
+                                <p className="text-sm font-medium">{l.label}</p>
+                                <p className="text-xs text-muted-foreground">Level {l.level}</p>
+                              </div>
                             </div>
                             <div className="text-right">
-                              <span className="text-xs text-muted-foreground block">Actual</span>
                               <span className="text-lg font-bold">{l.count}</span>
+                              <span className="text-xs text-muted-foreground block">{l.percent}%</span>
                             </div>
                           </div>
                         ))}
                       </div>
+
+                      {/* HSE Metrics */}
+                      {hseLoading ? (
+                        <div className="mt-6 p-4 bg-muted rounded-lg">
+                          <p className="text-sm text-muted-foreground">Loading HSE metrics...</p>
+                        </div>
+                      ) : hseError ? (
+                        <div className="mt-6 p-4 bg-destructive/10 rounded-lg">
+                          <p className="text-sm text-destructive">Failed to load HSE metrics: {hseError.message}</p>
+                        </div>
+                      ) : hseMetrics ? (
+                        <HseMetricsCard data={hseMetrics} />
+                      ) : null}
                     </>
                   );
                 })()}

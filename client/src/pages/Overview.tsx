@@ -972,9 +972,17 @@ export default function Overview() {
             </TooltipProvider>
           </div>
 
-          {/* Heatmap */}
+          {/* Department Injury Risk (replaces heatmap) */}
           <div className="lg:col-span-12 relative">
-            <ShadcnHeatmapCard title="Department × Month (Avg)" endpoint="/analytics/data/department-month-heatmap" params={{ dataset: "incident", ...filterParams }} refreshKey={refreshKey} />
+            <ShadcnBarCard 
+              title="Department Injury Risk (ISO 45001-weighted)"
+              endpoint="/analytics/advanced/injury-risk-by-department"
+              params={{}} 
+              height={420}
+              preserveOrder={true}
+              maxCategories={200}
+              refreshKey={refreshKey}
+            />
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -983,16 +991,15 @@ export default function Overview() {
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="left" className="max-w-sm">
-                  <p className="font-semibold mb-2">Department × Month Heatmap</p>
-                  <p className="text-sm mb-2">Shows average risk/severity scores by department and month. Helps identify patterns.</p>
-                  <p className="text-sm font-mono bg-muted p-2 rounded mb-2">
-                    Avg = Sum(Scores) / Count per Department-Month
+                  <p className="font-semibold mb-2">Department Injury Risk (ISO 45001-weighted)</p>
+                  <p className="text-sm mb-2">Ranks departments by injury risk using your Excel data and severity/likelihood model.</p>
+                  <p className="text-xs font-mono bg-muted p-2 rounded mb-2">
+                    Risk = (0.8 × Σ Actual Severity + 0.2 × Σ Worst Severity) × Likelihood
                   </p>
                   <ul className="text-xs space-y-1">
-                    <li>• <strong>Color scale:</strong> Light = low values, Dark = high values</li>
-                    <li>• <strong>Rows:</strong> Different departments</li>
-                    <li>• <strong>Columns:</strong> Different months</li>
-                    <li>• <strong>Use case:</strong> Spot departments or time periods with elevated risk</li>
+                    <li>• <strong>Severity map:</strong> C0=1, C1=2, C2=3, C3=4, C4/C5=5</li>
+                    <li>• <strong>Likelihood:</strong> derived from department injury counts (quintiles 1–5)</li>
+                    <li>• <strong>Bars:</strong> Normalized score and raw risk score</li>
                   </ul>
                 </TooltipContent>
               </Tooltip>
