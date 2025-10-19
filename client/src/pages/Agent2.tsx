@@ -534,23 +534,34 @@
       flushConversationToStorage(false);
     }, [conversationHistory]);
 
+  // Create a lightweight, storage-safe copy (omit heavy tool results and figures)
+  const sanitizeForStorage = (m: ConversationMessage) => {
+    return {
+      id: m.id,
+      question: m.question,
+      dataset: m.dataset,
+      analysis: typeof m.analysis === 'string' ? m.analysis.slice(0, 40000) : '', // cap size
+      timestamp: m.timestamp,
+      toolCallsCount: Array.isArray((m as any).toolCalls) ? (m as any).toolCalls.length : 0,
+    } as any;
+  };
+
   // Flush conversation (optionally including current pending message) to localStorage
   const flushConversationToStorage = (includePending: boolean = true) => {
     try {
-      const items: ConversationMessage[] = [...conversationHistoryRef.current];
+      const items: any[] = conversationHistoryRef.current.map(sanitizeForStorage);
       if (includePending) {
         const id = currentMessageIdRef.current || undefined;
         if (id && !savedMessageIdsRef.current.has(id)) {
           const buf = messageBuffersRef.current[id];
           if (buf) {
-            const pending: ConversationMessage = {
+            const pending: any = {
               id,
               question: buf.question || currentQuestion,
               dataset: buf.dataset || currentDataset,
-              toolCalls: buf.toolCalls || [],
-              analysis: buf.analysis || currentAnalysis || finalAnswer || "",
-              response: buf.response || null,
+              analysis: (buf.analysis || currentAnalysis || finalAnswer || "").slice(0, 40000),
               timestamp: buf.timestamp || Date.now(),
+              toolCallsCount: Array.isArray(buf.toolCalls) ? buf.toolCalls.length : 0,
             };
             if (!items.some(m => m.id === id)) {
               items.push(pending);
@@ -559,7 +570,7 @@
         }
       }
       // Merge with existing storage to avoid accidental truncation
-      let existing: ConversationMessage[] = [];
+      let existing: any[] = [];
       try {
         const saved = localStorage.getItem('safety-copilot-conversation');
         if (saved) {
@@ -567,9 +578,9 @@
           existing = Array.isArray(parsedRaw) ? parsedRaw : (parsedRaw ? [parsedRaw] : []);
         }
       } catch {}
-      const byId: Record<string, ConversationMessage> = {};
+      const byId: Record<string, any> = {};
       for (const m of existing) {
-        if (m && m.id) byId[m.id] = m as ConversationMessage;
+        if (m && m.id) byId[m.id] = m as any;
       }
       for (const m of items) {
         if (m && m.id) byId[m.id] = m;
@@ -635,7 +646,8 @@
           id: existing.id,
           question: message.question || existing.question,
           dataset: message.dataset || existing.dataset,
-          toolCalls: chooseToolCalls(),
+          // Do not keep heavy tool results in storage history
+          toolCalls: [],
           analysis: chooseAnalysis(),
           response: chooseResponse(),
           timestamp: existing.timestamp || message.timestamp || Date.now(),
@@ -644,7 +656,17 @@
         copy[idx] = merged;
         return copy;
       }
-      return [...prev, message];
+      // Drop heavy tool results for newly added entries
+      const light: ConversationMessage = {
+        id: message.id,
+        question: message.question,
+        dataset: message.dataset,
+        toolCalls: [],
+        analysis: message.analysis,
+        response: message.response,
+        timestamp: message.timestamp,
+      };
+      return [...prev, light];
     });
     savedMessageIdsRef.current.add(id);
   };
