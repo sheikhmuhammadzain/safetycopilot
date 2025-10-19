@@ -972,7 +972,8 @@ export default function Overview() {
             </TooltipProvider>
           </div>
 
-          {/* Department Injury Risk (replaces heatmap) */}
+          {/* Heatmap */}
+
           <div className="lg:col-span-12 relative">
             <ShadcnBarCard 
               title="Department Injury Risk (ISO 45001-weighted)"
@@ -1005,6 +1006,7 @@ export default function Overview() {
               </Tooltip>
             </TooltipProvider>
           </div>
+
         </div>
 
         {/* 🟥 TEMPORARILY HIDDEN: Conversion Analytics, Hazard Links, Matrix Gauge */}
@@ -1036,6 +1038,17 @@ export default function Overview() {
             </div>
           </CardContent>
         </Card> */}
+
+
+
+
+
+
+
+
+
+
+        
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <RecentList title="Recent Incidents" fetcher={getRecentIncidents} limit={5} />
