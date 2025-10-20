@@ -22,7 +22,9 @@ import {
   useIncidentForecast, 
   useLeadingLagging, 
   useRiskTrend, 
-  useHeinrichPyramid 
+  useHeinrichPyramid,
+  useActualRiskScore,
+  usePotentialRiskScore
 } from "@/hooks/useAdvancedAnalytics";
 import { useHseMetrics } from "@/hooks/useHseMetrics";
 import { HseMetricsCard } from "@/components/analytics/HseMetricsCard";
@@ -60,6 +62,8 @@ export default function Analytics() {
   const { data: riskTrend, isLoading: riskLoading, isError: riskError, error: riskErrorMsg } = useRiskTrend(filters, 3, refreshKey);
   const { data: heinrichData, isLoading: heinrichLoading, isError: heinrichError, error: heinrichErrorMsg } = useHeinrichPyramid(filters, refreshKey);
   const { data: hseMetrics, loading: hseLoading, error: hseError } = useHseMetrics();
+  const { data: actualRiskData, isLoading: actualRiskLoading, isError: actualRiskError, error: actualRiskErrorMsg } = useActualRiskScore(refreshKey);
+  const { data: potentialRiskData, isLoading: potentialRiskLoading, isError: potentialRiskError, error: potentialRiskErrorMsg } = usePotentialRiskScore(refreshKey);
 
   // Fetch filter options
   const fetchFilterOptions = async () => {
@@ -807,6 +811,365 @@ export default function Analytics() {
               </CardContent>
             </Card>
           )}
+
+          {/* Actual Risk Score */}
+          {actualRiskLoading ? (
+            <Card>
+              <CardHeader>
+                <Skeleton className="h-6 w-64" />
+                <Skeleton className="h-4 w-80 mt-2" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-[400px] w-full" />
+              </CardContent>
+            </Card>
+          ) : actualRiskError ? (
+            <Card className="border-destructive">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3 text-destructive">
+                  <AlertTriangle className="h-5 w-5" />
+                  <div>
+                    <p className="font-semibold">Failed to load Actual Risk Score</p>
+                    <p className="text-sm text-muted-foreground">{(actualRiskErrorMsg as any)?.message || String(actualRiskErrorMsg)}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : actualRiskData && actualRiskData.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <AlertTriangle className="h-5 w-5 text-orange-500" />
+                      Actual Risk Assessment by Department
+                    </CardTitle>
+                    <CardDescription>
+                      Risk scores based on actual injury consequences and frequency
+                    </CardDescription>
+                  </div>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <Info className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-md">
+                        <p className="font-semibold mb-2">Actual Risk Score</p>
+                        <p className="text-sm mb-3">Calculates department risk based on actual injury consequences:</p>
+                        
+                        {/* Formula */}
+                        <div className="mb-3">
+                          <p className="text-xs font-semibold mb-1">Formula:</p>
+                          <p className="text-sm font-mono bg-muted p-2 rounded text-center">
+                            Risk Score = Severity × Likelihood
+                          </p>
+                        </div>
+
+                        {/* Severity Penalties */}
+                        <div className="mb-3">
+                          <p className="text-xs font-semibold mb-1">Severity-Based Penalties:</p>
+                          <div className="bg-muted p-2 rounded text-xs font-mono space-y-0.5">
+                            <div className="flex justify-between">
+                              <span>C0 - No Ill Effect:</span>
+                              <span className="font-bold">1</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>C1 - Minor:</span>
+                              <span className="font-bold">2</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>C2 - Serious:</span>
+                              <span className="font-bold">3</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>C3 - Severe:</span>
+                              <span className="font-bold">4</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>C4 - Major:</span>
+                              <span className="font-bold">5</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>C5 - Catastrophic:</span>
+                              <span className="font-bold">5</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Details */}
+                        <ul className="text-xs space-y-1 mb-2">
+                          <li>• Filters incidents where Type = 'injury'</li>
+                          <li>• Likelihood: Based on injury count quintiles (1-5)</li>
+                          <li>• Normalized 0-1 scale for comparison</li>
+                        </ul>
+                        
+                        <p className="text-xs mt-2 text-muted-foreground font-semibold">⚠️ Departments with higher scores need immediate attention</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={Math.max(400, actualRiskData.length * 35)}>
+                  <BarChart
+                    data={actualRiskData.slice(0, 20)}
+                    layout="vertical"
+                    margin={{ top: 10, right: 80, left: 150, bottom: 10 }}
+                    barCategoryGap="20%"
+                  >
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" />
+                    <YAxis 
+                      dataKey="Department" 
+                      type="category" 
+                      width={140}
+                      tick={{ fontSize: 12 }}
+                    />
+                    <RechartsTooltip 
+                      content={({ payload }) => {
+                        if (payload && payload.length > 0) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-background border border-border p-3 rounded shadow-lg">
+                              <p className="font-semibold">{data.Department}</p>
+                              <div className="mt-2 space-y-1 text-sm">
+                                <p>Actual Risk Score: <span className="font-bold text-orange-500">{data.Actual_Risk_Score}</span></p>
+                                <p>Normalized Score: <span className="font-bold">{(data.Normalized_Score * 100).toFixed(1)}%</span></p>
+                                <p>Likelihood: <span className="font-bold">{data.Likelihood}/5</span></p>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar 
+                      dataKey="Actual_Risk_Score" 
+                      fill="#f97316" 
+                      radius={[0, 8, 8, 0]}
+                      label={{ 
+                        position: 'right', 
+                        fill: '#000',
+                        fontSize: 13,
+                        fontWeight: 'bold'
+                      }}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+                
+                {/* Summary Stats */}
+                <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 bg-muted rounded-lg">
+                    <span className="text-sm text-muted-foreground">Highest Risk</span>
+                    <p className="text-xl font-bold mt-1">{actualRiskData[0]?.Department || 'N/A'}</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Score: {actualRiskData[0]?.Actual_Risk_Score?.toFixed(1) || 'N/A'}
+                    </p>
+                  </div>
+                  <div className="p-4 bg-muted rounded-lg">
+                    <span className="text-sm text-muted-foreground">Departments Analyzed</span>
+                    <p className="text-xl font-bold mt-1">{actualRiskData.length}</p>
+                  </div>
+                  <div className="p-4 bg-muted rounded-lg">
+                    <span className="text-sm text-muted-foreground">Average Risk Score</span>
+                    <p className="text-xl font-bold mt-1">
+                      {(actualRiskData.reduce((sum: number, d: any) => sum + d.Actual_Risk_Score, 0) / actualRiskData.length).toFixed(1)}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {/* Potential Risk Score */}
+          {potentialRiskLoading ? (
+            <Card>
+              <CardHeader>
+                <Skeleton className="h-6 w-64" />
+                <Skeleton className="h-4 w-80 mt-2" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-[400px] w-full" />
+              </CardContent>
+            </Card>
+          ) : potentialRiskError ? (
+            <Card className="border-destructive">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3 text-destructive">
+                  <AlertTriangle className="h-5 w-5" />
+                  <div>
+                    <p className="font-semibold">Failed to load Potential Risk Score</p>
+                    <p className="text-sm text-muted-foreground">{(potentialRiskErrorMsg as any)?.message || String(potentialRiskErrorMsg)}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : potentialRiskData && potentialRiskData.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <TrendingUp className="h-5 w-5 text-yellow-500" />
+                      Potential Risk Assessment - Near-Miss Analysis
+                    </CardTitle>
+                    <CardDescription>
+                      Incidents with Minor Actual (C0/C1) but Severe Worst-Case (C3-C5)
+                    </CardDescription>
+                  </div>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <Info className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-md">
+                        <p className="font-semibold mb-2">Potential Risk Score - Near-Miss Analysis</p>
+                        <p className="text-sm mb-3">Identifies high-potential near-misses by department:</p>
+                        
+                        {/* Formula */}
+                        <div className="mb-3">
+                          <p className="text-xs font-semibold mb-1">Formula:</p>
+                          <p className="text-sm font-mono bg-muted p-2 rounded text-center">
+                            Potential Risk = Worst Case Severity × Likelihood
+                          </p>
+                        </div>
+
+                        {/* Severity Penalties */}
+                        <div className="mb-3">
+                          <p className="text-xs font-semibold mb-1">Severity-Based Penalties:</p>
+                          <div className="bg-muted p-2 rounded text-xs font-mono space-y-0.5">
+                            <div className="flex justify-between">
+                              <span>C0 - No Ill Effect:</span>
+                              <span className="font-bold">1</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>C1 - Minor:</span>
+                              <span className="font-bold">2</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>C2 - Serious:</span>
+                              <span className="font-bold">3</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>C3 - Severe:</span>
+                              <span className="font-bold">4</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>C4 - Major:</span>
+                              <span className="font-bold">5</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>C5 - Catastrophic:</span>
+                              <span className="font-bold">5</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Details */}
+                        <ul className="text-xs space-y-1 mb-2">
+                          <li>• Filters: Actual ≤ C1, Worst-Case ≥ C3</li>
+                          <li>• Shows what "could have happened"</li>
+                          <li>• Likelihood: Based on near-miss frequency (1-5)</li>
+                          <li>• Normalized 0-1 scale for comparison</li>
+                        </ul>
+                        
+                        <p className="text-xs mt-2 text-muted-foreground font-semibold">⚠️ High scores indicate departments that got "lucky" - require proactive intervention</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={Math.max(500, potentialRiskData.length * 30)}>
+                  <BarChart
+                    data={potentialRiskData.slice(0, 30)}
+                    layout="vertical"
+                    margin={{ top: 10, right: 80, left: 180, bottom: 10 }}
+                    barCategoryGap="15%"
+                  >
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" />
+                    <YAxis 
+                      dataKey="Department" 
+                      type="category" 
+                      width={170}
+                      tick={{ fontSize: 12 }}
+                    />
+                    <RechartsTooltip 
+                      content={({ payload }) => {
+                        if (payload && payload.length > 0) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-background border border-border p-3 rounded shadow-lg">
+                              <p className="font-semibold">{data.Department}</p>
+                              <div className="mt-2 space-y-1 text-sm">
+                                <p>Potential Risk Score: <span className="font-bold text-yellow-500">{data.Potential_Risk_Score}</span></p>
+                                <p>Normalized Score: <span className="font-bold">{(data.Normalized_Potential_Score * 100).toFixed(1)}%</span></p>
+                                <p>Likelihood: <span className="font-bold">{data.Potential_Likelihood}/5</span></p>
+                              </div>
+                              <p className="text-xs mt-2 text-muted-foreground">Near-misses that could have been serious</p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar 
+                      dataKey="Potential_Risk_Score" 
+                      fill="#f59e0b" 
+                      radius={[0, 8, 8, 0]}
+                      label={{ 
+                        position: 'right', 
+                        fill: '#000',
+                        fontSize: 13,
+                        fontWeight: 'bold'
+                      }}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+                
+                {/* Summary Stats */}
+                <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 bg-yellow-50 dark:bg-yellow-950/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                    <span className="text-sm text-muted-foreground">Highest Potential Risk</span>
+                    <p className="text-xl font-bold mt-1">{potentialRiskData[0]?.Department || 'N/A'}</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Score: {potentialRiskData[0]?.Potential_Risk_Score?.toFixed(1) || 'N/A'}
+                    </p>
+                  </div>
+                  <div className="p-4 bg-muted rounded-lg">
+                    <span className="text-sm text-muted-foreground">Departments with Near-Misses</span>
+                    <p className="text-xl font-bold mt-1">{potentialRiskData.length}</p>
+                  </div>
+                  <div className="p-4 bg-muted rounded-lg">
+                    <span className="text-sm text-muted-foreground">Average Potential Risk</span>
+                    <p className="text-xl font-bold mt-1">
+                      {(potentialRiskData.reduce((sum: number, d: any) => sum + d.Potential_Risk_Score, 0) / potentialRiskData.length).toFixed(1)}
+                    </p>
+                  </div>
+                </div>
+                
+                {/* Alert Banner */}
+                <div className="mt-4 p-4 bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-yellow-900 dark:text-yellow-100">Proactive Safety Insight</p>
+                      <p className="text-sm text-yellow-800 dark:text-yellow-200 mt-1">
+                        These departments experienced incidents with minor actual consequences but severe potential outcomes. 
+                        While no serious injuries occurred, these near-misses indicate systemic vulnerabilities requiring immediate 
+                        corrective action to prevent future catastrophic events.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
         </div>
 
       </main>

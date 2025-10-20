@@ -1044,3 +1044,223 @@ async def kpis_summary(
         "near_miss_ratio": json.loads(nmr_resp.body.decode()) if hasattr(nmr_resp, 'body') else {},
         "safety_index": json.loads(safety_index_resp.body.decode()) if hasattr(safety_index_resp, 'body') else {},
     }))
+
+
+# ======================= RISK ASSESSMENT ANALYTICS =======================
+
+@router.get("/actual-risk-score")
+async def actual_risk_score():
+    """
+    Actual Risk Score by Department
+    
+    Calculates risk scores based on actual injury consequences:
+    - Filters incidents where Incident Type(s) == 'injury'
+    - Maps Actual Consequence to severity scores (C0=1, C1=2, C2=3, C3=4, C4-C5=5)
+    - Calculates likelihood based on injury count quintiles (1-5 scale)
+    - Risk Score = Sum(Actual Severity) × Likelihood
+    - Normalized Score = min-max normalization
+    
+    Returns department-level actual risk assessment sorted by risk score.
+    """
+    sheets = load_default_sheets()
+    incident_df = sheets.get('Incident')
+    
+    if incident_df is None or incident_df.empty:
+        return JSONResponse(content=to_native_json([]))
+    
+    # Strip column names
+    incident_df.columns = incident_df.columns.str.strip()
+    
+    # Filter for injury incidents
+    incidents_df = incident_df[
+        incident_df['Incident Number'].notna() & 
+        incident_df['Incident Type(s)'].notna() & 
+        (incident_df['Incident Type(s)'].str.strip().str.lower() == 'injury')
+    ].copy()
+    
+    if incidents_df.empty:
+        return JSONResponse(content=to_native_json([]))
+    
+    # Severity scoring map
+    severity_scores = {
+        'C0 - No Ill Effect': 1,
+        'C1 - Minor': 2,
+        'C2 - Serious': 3,
+        'C3 - Severe': 4,
+        'C4 - Major': 5,
+        'C5 - Catastrophic': 5
+    }
+    
+    # Map actual severity to scores
+    incidents_df['Actual_Severity'] = incidents_df['Actual Consequence (Incident)'].map(severity_scores).fillna(0)
+    
+    # Calculate injury counts per department
+    injury_counts = incidents_df.groupby('Department').size().reset_index(name='Injury_Count')
+    
+    # Calculate likelihood based on quintiles
+    if len(injury_counts) > 1:
+        quantiles = injury_counts['Injury_Count'].quantile([0.2, 0.4, 0.6, 0.8]).values
+    else:
+        quantiles = [1, 1, 1, 1]
+    
+    def assign_likelihood(count):
+        if count <= quantiles[0]: return 1
+        elif count <= quantiles[1]: return 2
+        elif count <= quantiles[2]: return 3
+        elif count <= quantiles[3]: return 4
+        else: return 5
+    
+    injury_counts['Likelihood'] = injury_counts['Injury_Count'].apply(assign_likelihood)
+    
+    # Aggregate by department
+    dept_summary = incidents_df.groupby('Department').agg(
+        Injury_Count=('Incident Number', 'count'),
+        Sum_Actual_Severity=('Actual_Severity', 'sum')
+    ).reset_index()
+    
+    # Merge with likelihood
+    dept_summary = dept_summary.merge(injury_counts[['Department', 'Likelihood']], on='Department', how='left')
+    
+    # Calculate actual risk score
+    dept_summary['Actual_Risk_Score'] = dept_summary['Sum_Actual_Severity'] * dept_summary['Likelihood']
+    
+    # Normalize scores
+    min_score = dept_summary['Actual_Risk_Score'].min()
+    max_score = dept_summary['Actual_Risk_Score'].max()
+    if max_score != min_score:
+        dept_summary['Normalized_Score'] = (
+            (dept_summary['Actual_Risk_Score'] - min_score) / (max_score - min_score)
+        )
+    else:
+        dept_summary['Normalized_Score'] = 0
+    
+    # Sort by risk score descending
+    dept_summary = dept_summary.sort_values(by='Actual_Risk_Score', ascending=False)
+    
+    # Convert to records
+    result = dept_summary[[
+        'Department',
+        'Likelihood',
+        'Actual_Risk_Score',
+        'Normalized_Score'
+    ]].round(3).to_dict(orient='records')
+    
+    return JSONResponse(content=to_native_json(result))
+
+
+@router.get("/potential-risk-score")
+async def potential_risk_score():
+    """
+    Potential Risk Score by Department - Near-Miss Analysis
+    
+    Identifies and assesses near-miss incidents with high potential severity:
+    - Filters incidents with minor actual consequence (C0/C1) but severe worst-case (C3-C5)
+    - Maps Worst Case Consequence to severity scores
+    - Calculates likelihood based on potential risk count quintiles
+    - Risk Score = Sum(Worst Case Severity) × Likelihood
+    - Normalized Score = min-max normalization
+    
+    This metric highlights departments with high-potential near-misses that could have resulted
+    in serious incidents, helping prioritize proactive safety interventions.
+    
+    Returns department-level potential risk assessment sorted by risk score.
+    """
+    sheets = load_default_sheets()
+    incident_df = sheets.get('Incident')
+    
+    if incident_df is None or incident_df.empty:
+        return JSONResponse(content=to_native_json([]))
+    
+    # Strip column names
+    incident_df.columns = incident_df.columns.str.strip()
+    
+    # Severity scoring map
+    severity_scores = {
+        'C0 - No Ill Effect': 1,
+        'C1 - Minor': 2,
+        'C2 - Serious': 3,
+        'C3 - Severe': 4,
+        'C4 - Major': 5,
+        'C5 - Catastrophic': 5
+    }
+    
+    # Filter for potential risk (near-miss) incidents
+    potential_risk_df = incident_df[
+        incident_df['Incident Number'].notna() &
+        incident_df['Actual Consequence (Incident)'].notna() &
+        incident_df['Worst Case Consequence (Incident)'].notna()
+    ].copy()
+    
+    if potential_risk_df.empty:
+        return JSONResponse(content=to_native_json([]))
+    
+    # Map severities
+    potential_risk_df['Actual_Severity'] = potential_risk_df['Actual Consequence (Incident)'].map(severity_scores).fillna(0)
+    potential_risk_df['Worst_Severity'] = potential_risk_df['Worst Case Consequence (Incident)'].map(severity_scores).fillna(0)
+    
+    # Filter for near-misses: minor actual (≤C1) but severe worst-case (≥C3)
+    near_miss_df = potential_risk_df[
+        (potential_risk_df['Actual_Severity'] <= 2) &
+        (potential_risk_df['Worst_Severity'] >= 4)
+    ].copy()
+    
+    if near_miss_df.empty:
+        return JSONResponse(content=to_native_json([]))
+    
+    # Calculate potential risk counts per department
+    potential_counts = near_miss_df.groupby('Department').size().reset_index(name='Potential_Risk_Count')
+    
+    # Calculate likelihood based on quintiles
+    if len(potential_counts) > 1:
+        pot_quantiles = potential_counts['Potential_Risk_Count'].quantile([0.2, 0.4, 0.6, 0.8]).values
+    else:
+        pot_quantiles = [1, 1, 1, 1]
+    
+    def assign_potential_likelihood(count):
+        if count <= pot_quantiles[0]: return 1
+        elif count <= pot_quantiles[1]: return 2
+        elif count <= pot_quantiles[2]: return 3
+        elif count <= pot_quantiles[3]: return 4
+        else: return 5
+    
+    potential_counts['Potential_Likelihood'] = potential_counts['Potential_Risk_Count'].apply(assign_potential_likelihood)
+    
+    # Aggregate by department
+    potential_summary = near_miss_df.groupby('Department').agg(
+        Sum_Potential_Severity=('Worst_Severity', 'sum')
+    ).reset_index()
+    
+    # Merge with likelihood
+    potential_summary = potential_summary.merge(
+        potential_counts[['Department', 'Potential_Likelihood']], 
+        on='Department', 
+        how='left'
+    )
+    
+    # Calculate potential risk score
+    potential_summary['Potential_Risk_Score'] = (
+        potential_summary['Sum_Potential_Severity'] * potential_summary['Potential_Likelihood']
+    )
+    
+    # Normalize scores
+    min_pot = potential_summary['Potential_Risk_Score'].min()
+    max_pot = potential_summary['Potential_Risk_Score'].max()
+    if max_pot != min_pot:
+        potential_summary['Normalized_Potential_Score'] = (
+            (potential_summary['Potential_Risk_Score'] - min_pot) / (max_pot - min_pot)
+        )
+    else:
+        potential_summary['Normalized_Potential_Score'] = 0
+    
+    # Sort by risk score descending
+    potential_summary = potential_summary.sort_values(by='Potential_Risk_Score', ascending=False)
+    
+    # Convert to records
+    result = potential_summary[[
+        'Department',
+        'Potential_Likelihood',
+        'Potential_Risk_Score',
+        'Normalized_Potential_Score'
+    ]].round(3).to_dict(orient='records')
+    
+    return JSONResponse(content=to_native_json(result))

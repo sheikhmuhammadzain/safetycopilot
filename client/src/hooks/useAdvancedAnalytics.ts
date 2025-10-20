@@ -165,3 +165,49 @@ export function useHeinrichPyramid(filters: FilterParams, refreshKey?: number) {
     refetchInterval: false,
   });
 }
+
+// Hook for Actual Risk Score
+export function useActualRiskScore(refreshKey?: number) {
+  return useQuery({
+    queryKey: ["actual-risk-score", refreshKey ?? 0],
+    queryFn: async () => {
+      const key = makeKey("/analytics/advanced/actual-risk-score", {});
+      if (!refreshKey) {
+        const cached = getCache<any>(key);
+        if (cached) return cached;
+      }
+      
+      const response = await axios.get(`${API_BASE}/analytics/advanced/actual-risk-score`);
+      setCache(key, response.data, ADVANCED_ANALYTICS_TTL_MS);
+      return response.data;
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: false,
+  });
+}
+
+// Hook for Potential Risk Score
+export function usePotentialRiskScore(refreshKey?: number) {
+  return useQuery({
+    queryKey: ["potential-risk-score", refreshKey ?? 0],
+    queryFn: async () => {
+      const key = makeKey("/analytics/advanced/potential-risk-score", {});
+      if (!refreshKey) {
+        const cached = getCache<any>(key);
+        if (cached) return cached;
+      }
+      
+      const response = await axios.get(`${API_BASE}/analytics/advanced/potential-risk-score`);
+      setCache(key, response.data, ADVANCED_ANALYTICS_TTL_MS);
+      return response.data;
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: false,
+  });
+}

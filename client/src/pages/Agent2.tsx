@@ -378,6 +378,7 @@
     analysis: string;
     response: AgentResponse | null;
     timestamp: number;
+    status?: 'pending' | 'complete';
   }
 
   // Constants for memory management
@@ -409,6 +410,8 @@
     const [queriesOpen, setQueriesOpen] = useState(false);
     const [debouncedAnalysis, setDebouncedAnalysis] = useState("");
     const deferredAnalysis = useDeferredValue(debouncedAnalysis);
+    const frameTokenBufferRef = useRef<string>("");
+    const frameHandleRef = useRef<number | null>(null);
     
     // Action button states
     const [copiedCurrent, setCopiedCurrent] = useState(false);
@@ -470,15 +473,29 @@
         if (debounceTimerRef.current) {
           clearTimeout(debounceTimerRef.current);
         }
+        // cancel any rAF
+        if (frameHandleRef.current !== null) {
+          cancelAnimationFrame(frameHandleRef.current);
+          frameHandleRef.current = null;
+        }
+        frameTokenBufferRef.current = "";
       } else {
-        // During streaming, debounce to allow complete markdown tokens
+        // During streaming, prefer rAF-based buffer to reduce re-render jitter
+        frameTokenBufferRef.current = content || "";
+        const pump = () => {
+          setDebouncedAnalysis(frameTokenBufferRef.current);
+          frameHandleRef.current = requestAnimationFrame(pump);
+        };
+        if (frameHandleRef.current === null) {
+          frameHandleRef.current = requestAnimationFrame(pump);
+        }
+        // keep a slow debounce fallback to avoid starvation
         if (debounceTimerRef.current) {
           clearTimeout(debounceTimerRef.current);
         }
-        
         debounceTimerRef.current = setTimeout(() => {
-          setDebouncedAnalysis(content);
-        }, 32); // very tight debounce for smoother, natural token flow
+          setDebouncedAnalysis(frameTokenBufferRef.current);
+        }, 150);
       }
       
       return () => {
@@ -492,24 +509,29 @@
     // Removed auto-scroll during streaming to prevent jittery behavior
 
   // Save message to history when streaming completes (buffer-aware)
-  useEffect(() => {
+    useEffect(() => {
     if (!isStreaming && currentMessageIdRef.current) {
-      // Persist synchronously before any other state clearing can hide the UI
-      persistFromBuffer(currentMessageIdRef.current);
-      // Also flush to storage immediately
-      flushConversationToStorage(true);
+      // Check if message was already saved to avoid duplication
+      const messageId = currentMessageIdRef.current;
+      if (!savedMessageIdsRef.current.has(messageId)) {
+        console.log('💾 Saving message from useEffect:', messageId);
+        persistFromBuffer(messageId);
+        flushConversationToStorage(true);
+      } else {
+        console.log('⏭️ Message already saved, skipping duplicate save:', messageId);
+      }
     }
   }, [isStreaming]);
 
-  // Load conversation from localStorage on mount
+    // Load conversation from localStorage on mount
     useEffect(() => {
       try {
         const saved = localStorage.getItem('safety-copilot-conversation');
         if (saved) {
         const parsedRaw = JSON.parse(saved);
         const parsed: any[] = Array.isArray(parsedRaw) ? parsedRaw : (parsedRaw ? [parsedRaw] : []);
-        // Migrate old messages without IDs
-        const migrated = parsed.map((m: any, idx: number) => ({
+          // Migrate old messages without IDs
+          const migrated = parsed.map((m: any, idx: number) => ({
             ...m,
             id: m.id || `msg_${m.timestamp}_${idx}_${Math.random().toString(36).substr(2, 9)}`,
           }));
@@ -527,7 +549,7 @@
       }
     }, []);
 
-  // Save conversation to localStorage whenever it changes
+    // Save conversation to localStorage whenever it changes
     useEffect(() => {
       conversationHistoryRef.current = conversationHistory;
       // Merge-save without forcing pending buffer
@@ -536,6 +558,31 @@
 
   // Create a lightweight, storage-safe copy (omit heavy tool results and figures)
   const sanitizeForStorage = (m: ConversationMessage) => {
+    const isChartCall = (tc: any) => tc && tc.result && typeof tc.result === 'object' && tc.result.chart_type;
+    const truncateArr = (arr: any) => Array.isArray(arr) ? arr.slice(0, 200) : arr;
+    const sanitizeChartResult = (res: any) => {
+      if (!res || typeof res !== 'object') return undefined;
+      if (!res.chart_type) return undefined;
+      return {
+        chart_type: res.chart_type,
+        title: res.title,
+        x_label: res.x_label,
+        y_label: res.y_label,
+        x_data: truncateArr(res.x_data),
+        y_data: truncateArr(res.y_data),
+        labels: truncateArr(res.labels),
+        values: truncateArr(res.values),
+      };
+    };
+    const sanitizeChartToolCalls = (calls: any[]) => {
+      if (!Array.isArray(calls)) return [] as any[];
+      return calls.filter(isChartCall).map(tc => ({
+        tool: tc.tool,
+        arguments: tc.arguments,
+        timestamp: tc.timestamp,
+        result: sanitizeChartResult(tc.result),
+      }));
+    };
     return {
       id: m.id,
       question: m.question,
@@ -543,7 +590,15 @@
       analysis: typeof m.analysis === 'string' ? m.analysis.slice(0, 40000) : '', // cap size
       timestamp: m.timestamp,
       toolCallsCount: Array.isArray((m as any).toolCalls) ? (m as any).toolCalls.length : 0,
+      toolCalls: sanitizeChartToolCalls((m as any).toolCalls || []),
     } as any;
+  };
+
+  // Keep only chart tool calls (used for persisted history)
+  const isChartToolCall = (tc: any) => tc && tc.result && typeof tc.result === 'object' && tc.result.chart_type;
+  const filterChartToolCalls = (calls: any[]): ToolCall[] => {
+    if (!Array.isArray(calls)) return [] as unknown as ToolCall[];
+    return calls.filter(isChartToolCall);
   };
 
   // Flush conversation (optionally including current pending message) to localStorage
@@ -562,6 +617,7 @@
               analysis: (buf.analysis || currentAnalysis || finalAnswer || "").slice(0, 40000),
               timestamp: buf.timestamp || Date.now(),
               toolCallsCount: Array.isArray(buf.toolCalls) ? buf.toolCalls.length : 0,
+              status: 'pending',
             };
             if (!items.some(m => m.id === id)) {
               items.push(pending);
@@ -616,10 +672,14 @@
   const persistMessage = (message: ConversationMessage) => {
     const { id } = message;
     if (!id) return;
+    
+    console.log('📝 Persisting message:', id, 'status:', message.status || 'not-set');
+    
     // Allow upsert to enrich, but avoid degrading existing content
-    setConversationHistory(prev => {
+      setConversationHistory(prev => {
       const idx = prev.findIndex(m => m.id === id);
       if (idx >= 0) {
+        console.log('🔄 Updating existing message at index', idx, 'from status:', prev[idx].status);
         const existing = prev[idx];
         const chooseAnalysis = () => {
           const a = (existing.analysis || '').trim();
@@ -630,8 +690,8 @@
           return a || b; // fallback
         };
         const chooseToolCalls = () => {
-          const a = Array.isArray(existing.toolCalls) ? existing.toolCalls : [];
-          const b = Array.isArray(message.toolCalls) ? message.toolCalls : [];
+          const a = filterChartToolCalls(Array.isArray(existing.toolCalls) ? existing.toolCalls : []);
+          const b = filterChartToolCalls(Array.isArray(message.toolCalls) ? message.toolCalls : []);
           return b.length >= a.length ? b : a;
         };
         const chooseResponse = () => {
@@ -646,49 +706,53 @@
           id: existing.id,
           question: message.question || existing.question,
           dataset: message.dataset || existing.dataset,
-          // Do not keep heavy tool results in storage history
-          toolCalls: [],
+          toolCalls: chooseToolCalls(),
           analysis: chooseAnalysis(),
           response: chooseResponse(),
           timestamp: existing.timestamp || message.timestamp || Date.now(),
+          status: 'complete',
         } as ConversationMessage;
+        console.log('✅ Message updated to complete with analysis length:', merged.analysis.length);
         const copy = prev.slice();
         copy[idx] = merged;
         return copy;
       }
-      // Drop heavy tool results for newly added entries
-      const light: ConversationMessage = {
-        id: message.id,
-        question: message.question,
-        dataset: message.dataset,
-        toolCalls: [],
-        analysis: message.analysis,
-        response: message.response,
-        timestamp: message.timestamp,
-      };
-      return [...prev, light];
+      console.log('➕ Adding new message to history');
+      return [...prev, { ...message, toolCalls: filterChartToolCalls(message.toolCalls as any), status: 'complete' } as ConversationMessage];
     });
     savedMessageIdsRef.current.add(id);
+    console.log('✅ Message marked as saved in ref');
   };
 
   const persistFromBuffer = (id?: string) => {
     const messageId = id || currentMessageIdRef.current;
     if (!messageId) return;
+    
+    // Prevent duplicate saves
+    if (savedMessageIdsRef.current.has(messageId)) {
+      console.log('⏭️ Message already persisted, skipping:', messageId);
+      return;
+    }
+    
     const buf = messageBuffersRef.current[messageId];
     const analysisCandidate = (buf && buf.analysis && buf.analysis.length > 0)
       ? buf.analysis
       : (currentAnalysis || finalAnswer || response?.analysis || response?.answer || "");
     const messageToSave: ConversationMessage = {
-      id: messageId,
+            id: messageId,
       question: buf?.question || currentQuestion,
       dataset: buf?.dataset || currentDataset,
-      toolCalls: buf?.toolCalls || toolCalls.slice(),
+      toolCalls: filterChartToolCalls((buf?.toolCalls as any) || (toolCalls.slice() as any)),
       analysis: analysisCandidate && analysisCandidate.length > 0 ? analysisCandidate : "Analysis complete.",
       response: buf?.response || response || null,
       timestamp: buf?.timestamp || Date.now(),
     };
+    
+    console.log('💾 Persisting message:', messageId, 'with analysis length:', messageToSave.analysis.length);
     persistMessage(messageToSave);
     delete messageBuffersRef.current[messageId];
+    
+    // Mark as saved AFTER successful persist
     setCurrentSaved(true);
   };
 
@@ -696,7 +760,7 @@
   const saveCurrentMessageToHistory = () => {
     const messageId = currentMessageIdRef.current || undefined;
     persistFromBuffer(messageId);
-  };
+    };
 
     const startWebSocketStreaming = (overrideQuestion?: string, overrideDataset?: string) => {
       const q = (overrideQuestion ?? question).trim();
@@ -733,6 +797,22 @@
       
       // Clear input field for next message
       setQuestion("");
+      
+      // Immediately insert a lightweight pending message in history
+      const pendingMessage: ConversationMessage = {
+        id: messageId,
+        question: q,
+        dataset: d,
+        toolCalls: [],
+        analysis: '',
+        response: null,
+        timestamp: Date.now(),
+        status: 'pending',
+      };
+      setConversationHistory(prev => {
+        if (prev.some(m => m.id === messageId)) return prev;
+        return [...prev, pendingMessage];
+      });
       
       setIsStreaming(true);
       setLoading(true);
@@ -789,11 +869,13 @@
           
           if (data.type === 'answer_token' && data.token) {
             receivedAnswerTokensRef.current = true;
-            setCurrentAnalysis(prev => (prev || "") + data.token!);
-            setFinalAnswer(prev => (prev || "") + data.token!);
+            // Push token into buffer only; rAF loop will update UI
+            const token = data.token!;
+            setCurrentAnalysis(prev => (prev || "") + token);
+            setFinalAnswer(prev => (prev || "") + token);
             // buffer
             const buf = messageBuffersRef.current[messageId];
-            if (buf) buf.analysis = (buf.analysis || "") + data.token!;
+            if (buf) buf.analysis = (buf.analysis || "") + token;
             return;
           }
           
@@ -811,14 +893,23 @@
 
           // Tool calling
           if (data.type === 'tool_call' && data.tool && data.arguments) {
-            setToolCalls(prev => [
+            // Throttle tool-call state updates to reduce re-renders
+            setToolCalls(prev => {
+              const last = prev[prev.length - 1];
+              const now = Date.now();
+              // If last tool_call is same tool within 100ms, skip push
+              if (last && last.tool === data.tool && last.timestamp && now - (last.timestamp || 0) < 100) {
+                return prev;
+              }
+              return [
               ...prev,
               {
                 tool: data.tool!,
                 arguments: data.arguments!,
-                timestamp: Date.now(),
-              },
-            ]);
+                  timestamp: now,
+                },
+              ];
+            });
             // buffer
             const buf = messageBuffersRef.current[messageId];
             if (buf) buf.toolCalls = [
@@ -863,22 +954,24 @@
             if (buf) buf.response = data.data as AgentResponse;
           }
           if (data.type === 'analysis_chunk' && data.chunk) {
-            setCurrentAnalysis(prev => (prev || "") + data.chunk);
+            const chunk = data.chunk;
+            setCurrentAnalysis(prev => (prev || "") + chunk);
             const buf = messageBuffersRef.current[messageId];
-            if (buf) buf.analysis = (buf.analysis || "") + data.chunk;
+            if (buf) buf.analysis = (buf.analysis || "") + chunk;
           }
           // Final answer streaming support (robust to backend variations)
           if ((data.type === 'answer' || data.type === 'final_answer' || data.type === 'final') && data.content) {
             // If tokens already streamed, append; otherwise start fresh
+            const content = data.content;
             if (receivedAnswerTokensRef.current) {
-              setFinalAnswer(prev => (prev || "") + data.content);
-              setCurrentAnalysis(prev => (prev || "") + data.content);
+              setFinalAnswer(prev => (prev || "") + content);
+              setCurrentAnalysis(prev => (prev || "") + content);
             } else {
-              setFinalAnswer(prev => (prev || "") + data.content);
-              setCurrentAnalysis(prev => (prev || "") + data.content);
+              setFinalAnswer(prev => (prev || "") + content);
+              setCurrentAnalysis(prev => (prev || "") + content);
             }
             const buf = messageBuffersRef.current[messageId];
-            if (buf) buf.analysis = (buf.analysis || "") + data.content;
+            if (buf) buf.analysis = (buf.analysis || "") + content;
           }
           if ((data.type === 'answer_complete' || data.type === 'final_answer_complete') && data.content) {
             // If we already streamed tokens, prefer keeping the streamed content unless the
@@ -1243,7 +1336,7 @@
                   <div className="space-y-4">
                     {/* Historical Thinking & Planning (tools inside) */}
                     {msg.toolCalls && msg.toolCalls.length > 0 && (
-                      <Collapsible>
+                      <Collapsible defaultOpen={true}>
                         <div className="flex items-start space-x-3">
                           <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
                             <Sparkles className="h-4 w-4" />
@@ -1266,7 +1359,7 @@
                           const shouldAutoExpand = hasTableData || hasChartData || isWebSearch || isImageSearch;
                           
                           return (
-                            <Collapsible key={idx} defaultOpen={shouldAutoExpand}>
+                            <Collapsible key={idx} defaultOpen={hasChartData || isWebSearch || isImageSearch || hasTableData}>
                               <div className="flex items-start space-x-3">
                                 <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
                                   <BarChart3 className="h-4 w-4" />
@@ -1762,8 +1855,9 @@
                 </div>
               ))}
               
-              {/* Current User Question: keep visible until saved */}
-              {currentQuestion && !currentSaved && (
+              {/* Current User Question: only show if NOT already in history (prevents duplicate during streaming) */}
+              {currentQuestion && !currentSaved && currentMessageIdRef.current && 
+               !conversationHistory.some(m => m.id === currentMessageIdRef.current) && (
                 <div className="flex justify-end">
                   <div className="bg-primary text-primary-foreground rounded-2xl px-5 py-3 max-w-2xl">
                     <p className="text-sm">{currentQuestion}</p>
@@ -1771,8 +1865,10 @@
                 </div>
               )}
 
-              {/* Current Assistant Response Container */}
-              {(isStreaming || (!currentSaved && (response || currentAnalysis || finalAnswer || toolCalls.length > 0 || thinkingText))) && (
+              {/* Current Assistant Response Container - hide once it's in history as complete */}
+              {(isStreaming || (!currentSaved && currentMessageIdRef.current && 
+                !conversationHistory.some(m => m.id === currentMessageIdRef.current && m.status === 'complete') && 
+                (response || currentAnalysis || finalAnswer || toolCalls.length > 0 || thinkingText))) && (
                 <div className="space-y-4">
                   {/* Thinking & Planning (live) - tools + reasoning */}
           {(reasoningText?.trim().length > 0 || toolCalls.length > 0) && (
