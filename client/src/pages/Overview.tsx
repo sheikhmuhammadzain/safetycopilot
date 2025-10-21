@@ -974,7 +974,7 @@ export default function Overview() {
 
           {/* Heatmap */}
 
-          <div className="lg:col-span-12 relative">
+          {/* <div className="lg:col-span-12 relative">
             <ShadcnBarCard 
               title="Department Injury Risk"
               endpoint="/analytics/advanced/injury-risk-by-department"
@@ -1005,7 +1005,7 @@ export default function Overview() {
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-          </div>
+          </div> */}
 
         </div>
 
