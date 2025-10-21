@@ -221,22 +221,92 @@ FACILITY_ZONES = {
 
 
 def _zone_heatmap_data(df: pd.DataFrame, zones: dict, data_type: str):
-    zone_counts = {zn: {'count': 0, 'severity_sum': 0, 'risk_sum': 0, 'x': info['x'], 'y': info['y'], 'area': info['area']} for zn, info in zones.items()}
-    for zone_name in zones.keys():
-        count = 0
-        severity_sum = 0
-        risk_sum = 0
-        for col in ['location.1', 'sublocation', 'location']:
-            if col in df.columns:
-                matches = df[df[col].astype(str).str.contains(zone_name, case=False, na=False)]
-                count += len(matches)
-                if 'severity_score' in df.columns:
-                    severity_sum += pd.to_numeric(matches['severity_score'], errors='coerce').fillna(0).sum()
-                if 'risk_score' in df.columns:
-                    risk_sum += pd.to_numeric(matches['risk_score'], errors='coerce').fillna(0).sum()
-        zone_counts[zone_name]['count'] = int(count)
-        zone_counts[zone_name]['severity_sum'] = float(severity_sum)
-        zone_counts[zone_name]['risk_sum'] = float(risk_sum)
+    """
+    Generate heatmap data for facility zones, ensuring each row is counted only once.
+    Prioritizes location.1 (most specific) > sublocation > location for zone matching.
+    """
+    zone_counts = {zn: {'count': 0, 'x': info['x'], 'y': info['y'], 'area': info['area']} for zn, info in zones.items()}
+    
+    if df is None or df.empty:
+        x, y, intensity, size, text, hover, labels = [], [], [], [], [], [], []
+        for zone_name, data in zone_counts.items():
+            x.append(data['x'])
+            y.append(data['y'])
+            intensity.append(0)
+            size.append(30)
+            text.append("")
+            hover.append(f"{zone_name}<br>Area: {data['area']}<br>{data_type}: 0")
+            labels.append(zone_name)
+        return {'x': x, 'y': y, 'intensity': intensity, 'size': size, 'text': text, 'hover': hover, 'labels': labels}
+    
+    # Create a copy to avoid modifying original dataframe
+    df_copy = df.copy()
+    
+    # Helper function to find column by multiple possible names (case-insensitive)
+    def find_column(possible_names):
+        """Find first matching column name from a list of possibilities"""
+        for col in df_copy.columns:
+            col_lower = str(col).lower().strip()
+            for poss in possible_names:
+                if poss.lower().strip() == col_lower:
+                    return col
+        return None
+    
+    # Find actual column names (handle different naming conventions)
+    loc1_col = find_column(['Location (EPCL)', 'location.1', 'location (epcl)', 'specific location of occurrence', 'location tag'])
+    subloc_col = find_column(['Sub-Location', 'sublocation', 'sub-location', 'sub location'])
+    loc_col = find_column(['Location', 'location'])
+    
+    # Sort zone names by length (longest first) to prioritize specific matches
+    # E.g., "HPO Process Area" should be checked before "HPO"
+    sorted_zones = sorted(zones.keys(), key=len, reverse=True)
+    
+    # Assign each row to a zone (prioritize location.1 > sublocation > location)
+    # Each row is counted only once
+    for idx, row in df_copy.iterrows():
+        matched_zone = None
+        
+        # Priority 1: Check specific location column (most specific)
+        if loc1_col and pd.notna(row.get(loc1_col)):
+            loc1 = str(row[loc1_col]).strip()
+            if loc1 and loc1.lower() not in ['nan', 'none', '', 'not specified']:
+                for zone_name in sorted_zones:
+                    zone_lower = zone_name.lower()
+                    loc_lower = loc1.lower()
+                    # Bidirectional matching: zone in location OR location in zone
+                    if zone_lower in loc_lower or loc_lower in zone_lower:
+                        matched_zone = zone_name
+                        break
+        
+        # Priority 2: Check sublocation if location.1 didn't match
+        if matched_zone is None and subloc_col and pd.notna(row.get(subloc_col)):
+            subloc = str(row[subloc_col]).strip()
+            if subloc and subloc.lower() not in ['nan', 'none', '', 'not specified']:
+                for zone_name in sorted_zones:
+                    zone_lower = zone_name.lower()
+                    subloc_lower = subloc.lower()
+                    # Bidirectional matching: zone in location OR location in zone
+                    if zone_lower in subloc_lower or subloc_lower in zone_lower:
+                        matched_zone = zone_name
+                        break
+        
+        # Priority 3: Check location if neither location.1 nor sublocation matched
+        if matched_zone is None and loc_col and pd.notna(row.get(loc_col)):
+            loc = str(row[loc_col]).strip()
+            if loc and loc.lower() not in ['nan', 'none', '', 'not specified']:
+                for zone_name in sorted_zones:
+                    zone_lower = zone_name.lower()
+                    loc_lower = loc.lower()
+                    # Bidirectional matching: zone in location OR location in zone
+                    if zone_lower in loc_lower or loc_lower in zone_lower:
+                        matched_zone = zone_name
+                        break
+        
+        # If a zone was matched, add to counts
+        if matched_zone:
+            zone_counts[matched_zone]['count'] += 1
+    
+    # Build the visualization data
     x, y, intensity, size, text, hover, labels = [], [], [], [], [], [], []
     for zone_name, data in zone_counts.items():
         x.append(data['x'])
@@ -244,9 +314,7 @@ def _zone_heatmap_data(df: pd.DataFrame, zones: dict, data_type: str):
         intensity.append(data['count'])
         size.append(max(30, min(100, data['count'] * 8 + 20)))
         text.append(f"{data['count']}" if data['count'] > 0 else "")
-        avg_severity = (data['severity_sum'] / data['count']) if data['count'] > 0 else 0
-        avg_risk = (data['risk_sum'] / data['count']) if data['count'] > 0 else 0
-        hover.append(f"{zone_name}<br>Area: {data['area']}<br>{data_type}: {data['count']}<br>Avg Severity: {avg_severity:.1f}<br>Avg Risk: {avg_risk:.1f}")
+        hover.append(f"{zone_name}<br>Area: {data['area']}<br>{data_type}: {data['count']}<br>Count: {data['count']}")
         labels.append(zone_name)
     return {'x': x, 'y': y, 'intensity': intensity, 'size': size, 'text': text, 'hover': hover, 'labels': labels}
 
@@ -257,26 +325,84 @@ def create_facility_layout_heatmap(incident_df: Optional[pd.DataFrame], hazard_d
     incident_heatmap = _zone_heatmap_data(inc, FACILITY_ZONES, 'Incidents')
     hazard_heatmap = _zone_heatmap_data(haz, FACILITY_ZONES, 'Hazards')
     fig = make_subplots(rows=1, cols=2, subplot_titles=('🔴 Incident Heat Map', '⚠️ Hazard Heat Map'), specs=[[{'type': 'scatter'}, {'type': 'scatter'}]], horizontal_spacing=0.15)
-    fig.add_trace(go.Scatter(x=incident_heatmap['x'], y=incident_heatmap['y'], mode='markers', marker=dict(size=incident_heatmap['size'], color=incident_heatmap['intensity'], colorscale='Reds', showscale=True, colorbar=dict(x=0.45, title='Incidents', len=0.8), line=dict(width=2, color='darkred'), sizemode='diameter', sizeref=2, sizemin=20), hovertemplate='<b>%{hovertext}</b><br>Count: %{marker.color}<extra></extra>', hovertext=incident_heatmap['hover'], showlegend=False), row=1, col=1)
-    fig.add_trace(go.Scatter(x=incident_heatmap['x'], y=incident_heatmap['y'], mode='text', text=incident_heatmap['labels'], textposition='top center', textfont=dict(color='#374151', size=11), hoverinfo='skip', showlegend=False), row=1, col=1)
+    
+    # Incident heatmap - Add bubbles without text first
+    fig.add_trace(go.Scatter(
+        x=incident_heatmap['x'], 
+        y=incident_heatmap['y'], 
+        mode='markers',
+        marker=dict(
+            size=incident_heatmap['size'], 
+            color=incident_heatmap['intensity'], 
+            colorscale='Reds', 
+            showscale=True, 
+            colorbar=dict(x=0.45, title='Incidents', len=0.8), 
+            line=dict(width=2, color='darkred'), 
+            sizemode='diameter', 
+            sizeref=2, 
+            sizemin=20
+        ),
+        hovertemplate='<b>%{hovertext}</b><extra></extra>', 
+        hovertext=incident_heatmap['hover'], 
+        showlegend=False
+    ), row=1, col=1)
+    
+    # Add count text with adaptive colors based on intensity (incidents)
     inc_vals = incident_heatmap['intensity']
-    inc_thr = (max(inc_vals) * 0.55) if inc_vals else 0
-    inc_hi_idx = [i for i, v in enumerate(inc_vals) if v >= inc_thr]
-    inc_lo_idx = [i for i, v in enumerate(inc_vals) if v < inc_thr]
-    if inc_hi_idx:
-        fig.add_trace(go.Scatter(x=[incident_heatmap['x'][i] for i in inc_hi_idx], y=[incident_heatmap['y'][i] for i in inc_hi_idx], mode='text', text=[incident_heatmap['text'][i] for i in inc_hi_idx], textposition='middle center', textfont=dict(color='white', size=12, family='Arial Black'), hoverinfo='skip', showlegend=False), row=1, col=1)
-    if inc_lo_idx:
-        fig.add_trace(go.Scatter(x=[incident_heatmap['x'][i] for i in inc_lo_idx], y=[incident_heatmap['y'][i] for i in inc_lo_idx], mode='text', text=[incident_heatmap['text'][i] for i in inc_lo_idx], textposition='middle center', textfont=dict(color='#111827', size=12, family='Arial Black'), hoverinfo='skip', showlegend=False), row=1, col=1)
-    fig.add_trace(go.Scatter(x=hazard_heatmap['x'], y=hazard_heatmap['y'], mode='markers', marker=dict(size=hazard_heatmap['size'], color=hazard_heatmap['intensity'], colorscale='YlOrRd', showscale=True, colorbar=dict(x=1.0, title='Hazards', len=0.8), line=dict(width=2, color='darkorange'), sizemode='diameter', sizeref=2, sizemin=20), hovertemplate='<b>%{hovertext}</b><br>Count: %{marker.color}<extra></extra>', hovertext=hazard_heatmap['hover'], showlegend=False), row=1, col=2)
-    fig.add_trace(go.Scatter(x=hazard_heatmap['x'], y=hazard_heatmap['y'], mode='text', text=hazard_heatmap['labels'], textposition='top center', textfont=dict(color='#374151', size=11), hoverinfo='skip', showlegend=False), row=1, col=2)
+    inc_max = max(inc_vals) if inc_vals else 1
+    inc_thr = inc_max * 0.4  # Threshold for text color switching
+    
+    for i, (x, y, count, intensity) in enumerate(zip(incident_heatmap['x'], incident_heatmap['y'], incident_heatmap['text'], inc_vals)):
+        if count:  # Only add text if count > 0
+            text_color = 'white' if intensity > inc_thr else '#1f2937'
+            fig.add_trace(go.Scatter(
+                x=[x], y=[y], 
+                mode='text',
+                text=[count],
+                textposition='middle center',
+                textfont=dict(size=13, family='Arial Black', color=text_color),
+                hoverinfo='skip',
+                showlegend=False
+            ), row=1, col=1)
+    
+    # Hazard heatmap - Add bubbles without text first
+    fig.add_trace(go.Scatter(
+        x=hazard_heatmap['x'], 
+        y=hazard_heatmap['y'], 
+        mode='markers',
+        marker=dict(
+            size=hazard_heatmap['size'], 
+            color=hazard_heatmap['intensity'], 
+            colorscale='YlOrRd', 
+            showscale=True, 
+            colorbar=dict(x=1.0, title='Hazards', len=0.8), 
+            line=dict(width=2, color='darkorange'), 
+            sizemode='diameter', 
+            sizeref=2, 
+            sizemin=20
+        ),
+        hovertemplate='<b>%{hovertext}</b><extra></extra>', 
+        hovertext=hazard_heatmap['hover'], 
+        showlegend=False
+    ), row=1, col=2)
+    
+    # Add count text with adaptive colors based on intensity (hazards)
     haz_vals = hazard_heatmap['intensity']
-    haz_thr = (max(haz_vals) * 0.55) if haz_vals else 0
-    haz_hi_idx = [i for i, v in enumerate(haz_vals) if v >= haz_thr]
-    haz_lo_idx = [i for i, v in enumerate(haz_vals) if v < haz_thr]
-    if haz_hi_idx:
-        fig.add_trace(go.Scatter(x=[hazard_heatmap['x'][i] for i in haz_hi_idx], y=[hazard_heatmap['y'][i] for i in haz_hi_idx], mode='text', text=[hazard_heatmap['text'][i] for i in haz_hi_idx], textposition='middle center', textfont=dict(color='white', size=12, family='Arial Black'), hoverinfo='skip', showlegend=False), row=1, col=2)
-    if haz_lo_idx:
-        fig.add_trace(go.Scatter(x=[hazard_heatmap['x'][i] for i in haz_lo_idx], y=[hazard_heatmap['y'][i] for i in haz_lo_idx], mode='text', text=[hazard_heatmap['text'][i] for i in haz_lo_idx], textposition='middle center', textfont=dict(color='#111827', size=12, family='Arial Black'), hoverinfo='skip', showlegend=False), row=1, col=2)
+    haz_max = max(haz_vals) if haz_vals else 1
+    haz_thr = haz_max * 0.4  # Threshold for text color switching
+    
+    for i, (x, y, count, intensity) in enumerate(zip(hazard_heatmap['x'], hazard_heatmap['y'], hazard_heatmap['text'], haz_vals)):
+        if count:  # Only add text if count > 0
+            text_color = 'white' if intensity > haz_thr else '#1f2937'
+            fig.add_trace(go.Scatter(
+                x=[x], y=[y], 
+                mode='text',
+                text=[count],
+                textposition='middle center',
+                textfont=dict(size=13, family='Arial Black', color=text_color),
+                hoverinfo='skip',
+                showlegend=False
+            ), row=1, col=2)
     for c in (1, 2):
         fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGray', zeroline=False, showticklabels=False, range=[0, 6], title='', row=1, col=c)
         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGray', zeroline=False, showticklabels=False, range=[0, 6], title='', row=1, col=c)

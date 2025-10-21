@@ -1710,6 +1710,67 @@ async def cost_prediction_analysis_insights(dataset: str = Query("incident", des
     return ChartInsightsResponse(insights_md="\n".join(parts))
 
 
+@router.get("/facility-layout-heatmap/debug")
+async def facility_layout_heatmap_debug():
+    """Debug endpoint to inspect location data in incidents and hazards"""
+    inc_df = get_incident_df()
+    haz_df = get_hazard_df()
+    
+    result = {
+        "incidents": {
+            "total_rows": len(inc_df) if inc_df is not None else 0,
+            "columns": list(inc_df.columns) if inc_df is not None else [],
+            "location_1_samples": [],
+            "sublocation_samples": [],
+            "location_samples": []
+        },
+        "hazards": {
+            "total_rows": len(haz_df) if haz_df is not None else 0,
+            "columns": list(haz_df.columns) if haz_df is not None else [],
+            "location_1_samples": [],
+            "sublocation_samples": [],
+            "location_samples": []
+        }
+    }
+    
+    # Helper to find column case-insensitively
+    def find_col(df, names):
+        for col in df.columns:
+            if str(col).lower().strip() in [n.lower().strip() for n in names]:
+                return col
+        return None
+    
+    # Get incident location samples
+    if inc_df is not None and not inc_df.empty:
+        loc1 = find_col(inc_df, ['Location (EPCL)', 'location.1', 'location (epcl)'])
+        subloc = find_col(inc_df, ['Sub-Location', 'sublocation', 'sub-location'])
+        loc = find_col(inc_df, ['Location', 'location'])
+        
+        if loc1:
+            result["incidents"]["location_1_samples"] = inc_df[loc1].dropna().unique().tolist()[:20]
+        if subloc:
+            result["incidents"]["sublocation_samples"] = inc_df[subloc].dropna().unique().tolist()[:20]
+        if loc:
+            result["incidents"]["location_samples"] = inc_df[loc].dropna().unique().tolist()[:20]
+    
+    # Get hazard location samples
+    if haz_df is not None and not haz_df.empty:
+        loc1 = find_col(haz_df, ['Location (EPCL)', 'location.1', 'location (epcl)'])
+        subloc = find_col(haz_df, ['Sub-Location', 'sublocation', 'sub-location'])
+        loc = find_col(haz_df, ['Location', 'location'])
+        
+        if loc1:
+            result["hazards"]["location_1_samples"] = haz_df[loc1].dropna().unique().tolist()[:20]
+        if subloc:
+            result["hazards"]["sublocation_samples"] = haz_df[subloc].dropna().unique().tolist()[:20]
+        if loc:
+            result["hazards"]["location_samples"] = haz_df[loc].dropna().unique().tolist()[:20]
+    
+    result["facility_zones"] = list(plot_service.FACILITY_ZONES.keys())
+    
+    return JSONResponse(content=result)
+
+
 @router.get("/facility-layout-heatmap", response_model=PlotlyFigureResponse)
 async def facility_layout_heatmap():
     inc_df = get_incident_df()
@@ -1720,37 +1781,81 @@ async def facility_layout_heatmap():
 
 @router.get("/facility-layout-heatmap/insights", response_model=ChartInsightsResponse)
 async def facility_layout_heatmap_insights():
-    title = "Facility Risk Heat Map"
+    title = "Facility Layout Heat Map"
     inc_df = get_incident_df()
     haz_df = get_hazard_df()
+    
+    def find_col(df, names):
+        """Find column by multiple possible names (case-insensitive)"""
+        for col in df.columns:
+            if str(col).lower().strip() in [n.lower().strip() for n in names]:
+                return col
+        return None
+    
     def _zone_summary(df: pd.DataFrame, label: str):
         if df is None or df.empty:
             return None
         zones = getattr(plot_service, 'FACILITY_ZONES', {})
+        
+        # Find actual column names
+        loc1_col = find_col(df, ['Location (EPCL)', 'location.1', 'location (epcl)'])
+        subloc_col = find_col(df, ['Sub-Location', 'sublocation', 'sub-location'])
+        loc_col = find_col(df, ['Location', 'location'])
+        
+        # Sort zones by length to prioritize specific matches
+        sorted_zones = sorted(zones.keys(), key=len, reverse=True)
+        
+        # Count incidents per zone (each row counted once)
+        zone_counts = {zn: 0 for zn in zones.keys()}
+        
+        for idx, row in df.iterrows():
+            matched_zone = None
+            
+            # Priority 1: Check specific location
+            if loc1_col and pd.notna(row.get(loc1_col)):
+                loc1 = str(row[loc1_col]).strip()
+                if loc1 and loc1.lower() not in ['nan', 'none', '', 'not specified']:
+                    for zone_name in sorted_zones:
+                        if zone_name.lower() in loc1.lower() or loc1.lower() in zone_name.lower():
+                            matched_zone = zone_name
+                            break
+            
+            # Priority 2: Check sublocation
+            if matched_zone is None and subloc_col and pd.notna(row.get(subloc_col)):
+                subloc = str(row[subloc_col]).strip()
+                if subloc and subloc.lower() not in ['nan', 'none', '', 'not specified']:
+                    for zone_name in sorted_zones:
+                        if zone_name.lower() in subloc.lower() or subloc.lower() in zone_name.lower():
+                            matched_zone = zone_name
+                            break
+            
+            # Priority 3: Check location
+            if matched_zone is None and loc_col and pd.notna(row.get(loc_col)):
+                loc = str(row[loc_col]).strip()
+                if loc and loc.lower() not in ['nan', 'none', '', 'not specified']:
+                    for zone_name in sorted_zones:
+                        if zone_name.lower() in loc.lower() or loc.lower() in zone_name.lower():
+                            matched_zone = zone_name
+                            break
+            
+            if matched_zone:
+                zone_counts[matched_zone] += 1
+        
+        # Build result rows
         rows = []
         for zone_name, info in zones.items():
-            count = 0
-            sev_sum = 0.0
-            risk_sum = 0.0
-            for col in ['location.1','sublocation','location']:
-                if col in df.columns:
-                    m = df[df[col].astype(str).str.contains(zone_name, case=False, na=False)]
-                    count += len(m)
-                    if 'severity_score' in df.columns:
-                        sev_sum += pd.to_numeric(m['severity_score'], errors='coerce').fillna(0).sum()
-                    if 'risk_score' in df.columns:
-                        risk_sum += pd.to_numeric(m['risk_score'], errors='coerce').fillna(0).sum()
-            avg_sev = (sev_sum / count) if count > 0 else 0.0
-            avg_risk = (risk_sum / count) if count > 0 else 0.0
-            rows.append({'zone': zone_name, 'area': info.get('area'), 'count': int(count), 'avg_severity': float(avg_sev), 'avg_risk': float(avg_risk)})
-        rows = [r for r in rows if r['count'] > 0]
+            count = zone_counts.get(zone_name, 0)
+            if count > 0:
+                rows.append({'zone': zone_name, 'area': info.get('area'), 'count': int(count)})
+        
         rows.sort(key=lambda r: r['count'], reverse=True)
-        return {'label': label, 'top_by_count': rows[:5], 'top_by_risk': sorted(rows, key=lambda r: r['avg_risk'], reverse=True)[:5]}
+        return {'label': label, 'top_by_count': rows[:10]}
+    
     inc = _zone_summary(inc_df, 'Incidents')
     haz = _zone_summary(haz_df, 'Hazards')
     summary = {'title': title, 'incidents': inc, 'hazards': haz}
     try:
-        prompt = "Summarize top facility zones by incidents and risk for incidents and hazards; include actions."
+        prompt = "Summarize top facility zones by incident and hazard counts; include safety recommendations."
         md = ask_openai(prompt, context=json.dumps(summary, ensure_ascii=False), model="gpt-4o", code_mode=False, multi_df=False)
         if md and not md.lower().startswith("openai") and "not installed" not in md.lower():
             return ChartInsightsResponse(insights_md=md)
@@ -1765,7 +1870,8 @@ async def facility_layout_heatmap_insights():
         parts.append(f"- **Hazards hotspot**: {r['zone']} ({r['count']})")
     parts.append("\n### Recommendations")
     parts.append("- **Action**: Conduct targeted inspections in hotspot zones.")
-    parts.append("- **Action**: Strengthen controls in high-risk areas.")
+    parts.append("- **Action**: Strengthen controls in high-incident areas.")
+    parts.append("- **Action**: Review operational procedures in zones with frequent events.")
     return ChartInsightsResponse(insights_md="\n".join(parts))
 
 

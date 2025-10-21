@@ -118,7 +118,7 @@ export default function Analytics() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button
+            {/* <Button
               variant={dataset === "incident" ? "default" : "outline"}
               size="sm"
               onClick={() => setDataset("incident")}
@@ -131,7 +131,7 @@ export default function Analytics() {
               onClick={() => setDataset("hazard")}
             >
               Hazards
-            </Button>
+            </Button> */}
             <Button
               variant="outline"
               size="sm"
@@ -219,13 +219,13 @@ export default function Analytics() {
 
       {/* Main Content */}
       <main className="p-6 space-y-8">
-        {/* Section 1: Audit/Inspection Tracking */}
+        {/* Section 1: Audit/Inspection Tracking
         <div className="space-y-4">
           <h2 className="text-xl font-semibold text-foreground">Audit & Inspection Tracking</h2>
           <div className="grid grid-cols-1 gap-6">
             <PlotlyCard title="Audit/Inspection Tracker" endpoint="/analytics/audit-inspection-tracker" height={420} refreshKey={refreshKey} />
           </div>
-        </div>
+        </div> */}
 
         {/* Section 2: Facility Heatmaps */}
         <div className="space-y-4">
@@ -563,7 +563,7 @@ export default function Analytics() {
           )}
 
           {/* Risk Trend Projection */}
-          {riskLoading ? (
+          {/* {riskLoading ? (
             <Card>
               <CardHeader>
                 <Skeleton className="h-6 w-64" />
@@ -655,7 +655,7 @@ export default function Analytics() {
             </div>
           </CardContent>
         </Card>
-          )}
+          )} */}
 
           {/* Heinrich's Pyramid */}
           {heinrichLoading ? (

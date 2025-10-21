@@ -880,7 +880,7 @@ export default function Overview() {
 
           <div className="lg:col-span-12 relative">
             <StackedBarCard 
-              title="Incidents by Type and Severity" 
+              title="Hazards by Type and Severity" 
               endpoint="/analytics/data/incident-top-findings" 
               params={{ dataset: "incident", ...filterParams }} 
               refreshKey={refreshKey}
@@ -894,10 +894,10 @@ export default function Overview() {
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="left" className="max-w-sm">
-                  <p className="font-semibold mb-2">Incidents by Type and Severity</p>
-                  <p className="text-sm mb-2">Stacked bar chart showing incident types with severity level breakdown (C0-C5).</p>
+                  <p className="font-semibold mb-2">Hazards by Type and Severity</p>
+                  <p className="text-sm mb-2">Stacked bar chart showing hazard types with severity level breakdown (C0-C5).</p>
                   <p className="text-sm font-mono bg-muted p-2 rounded mb-2">
-                    Stacked bars = Severity distribution per incident type
+                    Stacked bars = Severity distribution per hazard type
                   </p>
                   <ul className="text-xs space-y-1">
                     <li>• <strong>Data source:</strong> Incident Type(s) + Worst Case Consequence</li>
@@ -976,7 +976,7 @@ export default function Overview() {
 
           <div className="lg:col-span-12 relative">
             <ShadcnBarCard 
-              title="Department Injury Risk (ISO 45001-weighted)"
+              title="Department Injury Risk"
               endpoint="/analytics/advanced/injury-risk-by-department"
               params={{}} 
               height={420}
