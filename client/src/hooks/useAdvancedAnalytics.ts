@@ -70,22 +70,19 @@ export function useIncidentForecast(filters: FilterParams, monthsAhead: number =
 }
 
 // Hook for Leading vs Lagging Indicators
+// NOTE: This always uses the full dataset regardless of filters
 export function useLeadingLagging(filters: FilterParams, refreshKey?: number) {
   return useQuery({
-    queryKey: ["leading-lagging", filters, refreshKey ?? 0],
+    queryKey: ["leading-lagging", refreshKey ?? 0], // Removed filters from cache key since data is always the same
     queryFn: async () => {
-      const key = makeKey("/analytics/predictive/leading-vs-lagging", filters);
+      const key = "/analytics/predictive/leading-vs-lagging";
       if (!refreshKey) {
         const cached = getCache<any>(key);
         if (cached) return cached;
       }
-      const params = new URLSearchParams();
-      if (filters.startDate) params.append("start_date", filters.startDate);
-      if (filters.endDate) params.append("end_date", filters.endDate);
-      if (filters.location) params.append("location", filters.location);
-      if (filters.department) params.append("department", filters.department);
       
-      const response = await axios.get(`${API_BASE}/analytics/predictive/leading-vs-lagging?${params}`);
+      // No filter parameters - always fetch full dataset
+      const response = await axios.get(`${API_BASE}/analytics/predictive/leading-vs-lagging`);
       setCache(key, response.data, ADVANCED_ANALYTICS_TTL_MS);
       return response.data;
     },

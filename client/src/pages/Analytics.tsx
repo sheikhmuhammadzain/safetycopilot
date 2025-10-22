@@ -227,6 +227,163 @@ export default function Analytics() {
           </div>
         </div> */}
 
+
+  {/* Heinrich's Pyramid */}
+          {heinrichLoading ? (
+            <Card>
+              <CardHeader>
+                <Skeleton className="h-6 w-64" />
+                <Skeleton className="h-4 w-96 mt-2" />
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <Skeleton className="h-[300px] w-full" />
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <Skeleton className="h-20 w-full" />
+                    <Skeleton className="h-20 w-full" />
+                    <Skeleton className="h-20 w-full" />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : heinrichError ? (
+            <Card className="border-destructive">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3 text-destructive">
+                  <AlertTriangle className="h-5 w-5" />
+                  <div>
+                    <p className="font-semibold">Failed to load Heinrich's Pyramid</p>
+                    <p className="text-sm text-muted-foreground">{(heinrichErrorMsg as any)?.message || String(heinrichErrorMsg)}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : heinrichData && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <AlertTriangle className="h-5 w-5" />
+                      Heinrich's Safety Pyramid
+                    </CardTitle>
+                    <CardDescription>
+                      Complete dataset analysis - Industry standard ratios (1:10:30:600:3000)
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => setHeinrichBreakdownOpen(true)}
+                      className="gap-2"
+                    >
+                      <FileText className="h-4 w-4" />
+                      View Breakdown
+                    </Button>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <Info className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                      <TooltipContent className="max-w-sm">
+                        <p className="font-semibold mb-2">Heinrich's Safety Pyramid (Customized for Our Model)</p>
+                        <p className="text-sm mb-2">Shows the relationship between minor and major safety events, emphasizing proactive prevention.</p>
+                        <p className="text-sm mb-2"><strong>5 Levels (Top to Bottom):</strong></p>
+                        <ul className="text-xs space-y-1 mb-2">
+                          <li>• <strong>Level 1:</strong> Fatalities (C4–C5 Injuries)</li>
+                          <li>• <strong>Level 2:</strong> Serious Injuries (C3)</li>
+                          <li>• <strong>Level 3:</strong> Minor Injuries (C1–C2)</li>
+                          <li>• <strong>Level 4:</strong> Near Misses (C0 actual, C3–C5 worst case)</li>
+                          <li>• <strong>Level 5:</strong> Unsafe Conditions/At-Risk Behaviors (hazards, observations)</li>
+                        </ul>
+                        <p className="text-xs text-muted-foreground">These tiers help focus on leading indicators to prevent severe outcomes.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {/* Map API layers to PyramidChart shape and compute totals */}
+                {(() => {
+                  const apiLayers = Array.isArray(heinrichData.layers) ? heinrichData.layers : [];
+                  const totalEvents = apiLayers.reduce((sum: number, l: any) => sum + (Number(l.count) || 0), 0);
+                  const layersForChart = apiLayers.map((l: any) => ({
+                    level: l.level,
+                    label: l.label,
+                    count: Number(l.count) || 0,
+                    ratio: 0, // Not used by chart
+                    color: l.color || "#7fbf7f",
+                  }));
+
+                  return (
+                    <>
+                      <PyramidChart layers={layersForChart} totalEvents={totalEvents} />
+
+                      {/* Stats */}
+                      <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="p-4 bg-muted rounded-lg">
+                          <span className="text-sm text-muted-foreground">Total Events</span>
+                          <p className="text-2xl font-bold">{totalEvents}</p>
+                        </div>
+                        <div className="p-4 bg-muted rounded-lg">
+                          <span className="text-sm text-muted-foreground">Data Coverage</span>
+                          <p className="text-2xl font-bold">Whole Dataset</p>
+                        </div>
+                        <div className="p-4 bg-muted rounded-lg">
+                          <span className="text-sm text-muted-foreground">Industry Standard</span>
+                          <p className="text-sm font-medium mt-1">1:10:30:600:3000</p>
+                        </div>
+                      </div>
+
+                      {/* Layer details */}
+                      <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {apiLayers.map((l: any, idx: number) => (
+                          <div key={idx} className="p-3 rounded border flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="w-4 h-4 rounded" style={{ backgroundColor: l.color }}></div>
+                              <div>
+                                <p className="text-sm font-medium">{l.label}</p>
+                                <p className="text-xs text-muted-foreground">Level {l.level}</p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-lg font-bold">{l.count}</span>
+                              <span className="text-xs text-muted-foreground block">{l.percent}%</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* HSE Metrics */}
+                      {hseLoading ? (
+                        <div className="mt-6 p-4 bg-muted rounded-lg">
+                          <p className="text-sm text-muted-foreground">Loading HSE metrics...</p>
+                        </div>
+                      ) : hseError ? (
+                        <div className="mt-6 p-4 bg-destructive/10 rounded-lg">
+                          <p className="text-sm text-destructive">Failed to load HSE metrics: {hseError.message}</p>
+                        </div>
+                      ) : hseMetrics ? (
+                        <HseMetricsCard data={hseMetrics} />
+                      ) : null}
+                    </>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+          )}
+
+
         {/* Section 2: Facility Heatmaps */}
         <div className="space-y-4">
           <h2 className="text-xl font-semibold text-foreground">Facility Risk Visualization</h2>
@@ -398,17 +555,17 @@ export default function Analytics() {
                         </p>
                         <p className="text-xs mb-2"><strong>Leading (Proactive):</strong></p>
                         <ul className="text-xs space-y-1 mb-2">
-                          <li>• Hazards identified</li>
-                          <li>• Audits completed</li>
-                          <li>• Inspections performed</li>
-                          <li>• Near-miss reports</li>
+                          <li>• Hazards: Records with valid Incident Number</li>
+                          <li>• Audits: Records with valid Audit Number</li>
+                          <li>• Inspections: Records with valid Audit Number</li>
+                          <li>• Near-miss: Actual=C0 & Worst Case≥C3</li>
                         </ul>
                         <p className="text-xs mb-2"><strong>Lagging (Reactive):</strong></p>
                         <ul className="text-xs space-y-1">
-                          <li>• Total incidents</li>
-                          <li>• Lost-time incidents</li>
-                          <li>• Medical cases</li>
-                          <li>• Serious incidents</li>
+                          <li>• Injuries: Count of injury incidents</li>
+                          <li>• Incidents: Total incidents with valid number</li>
+                          <li>• Fatalities: Injuries with C4/C5 severity</li>
+                          <li>• Serious Injuries: Injuries with C3 severity</li>
                         </ul>
                         <p className="text-xs mt-2 text-muted-foreground">Best practice: 5-10:1 ratio</p>
                       </TooltipContent>
@@ -422,17 +579,17 @@ export default function Analytics() {
                     data={[
                       {
                         name: "Leading",
-                        Hazards: leadingLagging.leading_indicators.hazards_identified,
-                        Audits: leadingLagging.leading_indicators.audits_completed,
-                        Inspections: leadingLagging.leading_indicators.inspections_performed,
-                        NearMiss: leadingLagging.leading_indicators.near_miss_reports,
+                        Hazards: leadingLagging.leading_indicators.Hazards,
+                        Audits: leadingLagging.leading_indicators.Audits,
+                        Inspections: leadingLagging.leading_indicators.Inspections,
+                        "Near-miss": leadingLagging.leading_indicators["Near-miss"],
                       },
                       {
                         name: "Lagging",
-                        Incidents: leadingLagging.lagging_indicators.total_incidents,
-                        LostTime: leadingLagging.lagging_indicators.lost_time_incidents,
-                        Medical: leadingLagging.lagging_indicators.medical_treatment_cases,
-                        Serious: leadingLagging.lagging_indicators.serious_incidents,
+                        Injuries: leadingLagging.lagging_indicators.Injuries,
+                        Incidents: leadingLagging.lagging_indicators.Incidents,
+                        Fatalities: leadingLagging.lagging_indicators.Fatalities,
+                        "Serious Injuries": leadingLagging.lagging_indicators["Serious Injuries"],
                       },
                     ]}
                   >
@@ -441,14 +598,14 @@ export default function Analytics() {
                     <YAxis />
                     <RechartsTooltip />
                     <Legend />
-                    <Bar dataKey="Hazards" fill="#8bc34a" />
-                    <Bar dataKey="Audits" fill="#4caf50" />
-                    <Bar dataKey="Inspections" fill="#66bb6a" />
-                    <Bar dataKey="NearMiss" fill="#81c784" />
-                    <Bar dataKey="Incidents" fill="#f44336" />
-                    <Bar dataKey="LostTime" fill="#e53935" />
-                    <Bar dataKey="Medical" fill="#d32f2f" />
-                    <Bar dataKey="Serious" fill="#b71c1c" />
+                    <Bar dataKey="Hazards" fill="#8bc34a" name="Hazards" />
+                    <Bar dataKey="Audits" fill="#4caf50" name="Audits" />
+                    <Bar dataKey="Inspections" fill="#66bb6a" name="Inspections" />
+                    <Bar dataKey="Near-miss" fill="#81c784" name="Near-miss" />
+                    <Bar dataKey="Injuries" fill="#ff9800" name="Injuries" />
+                    <Bar dataKey="Incidents" fill="#f44336" name="Incidents" />
+                    <Bar dataKey="Fatalities" fill="#b71c1c" name="Fatalities" />
+                    <Bar dataKey="Serious Injuries" fill="#d32f2f" name="Serious Injuries" />
                   </BarChart>
                 </ResponsiveContainer>
                 <div className="mt-4 p-4 bg-muted rounded-lg">
@@ -470,7 +627,7 @@ export default function Analytics() {
           )}
 
           {/* Incident Forecast */}
-          {forecastLoading ? (
+          {/* {forecastLoading ? (
             <Card>
               <CardHeader>
                 <Skeleton className="h-6 w-64" />
@@ -560,7 +717,7 @@ export default function Analytics() {
                 </ResponsiveContainer>
               </CardContent>
             </Card>
-          )}
+          )} */}
 
           {/* Risk Trend Projection */}
           {/* {riskLoading ? (
@@ -657,160 +814,7 @@ export default function Analytics() {
         </Card>
           )} */}
 
-          {/* Heinrich's Pyramid */}
-          {heinrichLoading ? (
-            <Card>
-              <CardHeader>
-                <Skeleton className="h-6 w-64" />
-                <Skeleton className="h-4 w-96 mt-2" />
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <Skeleton className="h-[300px] w-full" />
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <Skeleton className="h-20 w-full" />
-                    <Skeleton className="h-20 w-full" />
-                    <Skeleton className="h-20 w-full" />
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <Skeleton className="h-16 w-full" />
-                    <Skeleton className="h-16 w-full" />
-                    <Skeleton className="h-16 w-full" />
-                    <Skeleton className="h-16 w-full" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ) : heinrichError ? (
-            <Card className="border-destructive">
-              <CardContent className="pt-6">
-                <div className="flex items-center gap-3 text-destructive">
-                  <AlertTriangle className="h-5 w-5" />
-                  <div>
-                    <p className="font-semibold">Failed to load Heinrich's Pyramid</p>
-                    <p className="text-sm text-muted-foreground">{(heinrichErrorMsg as any)?.message || String(heinrichErrorMsg)}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ) : heinrichData && (
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="flex items-center gap-2">
-                      <AlertTriangle className="h-5 w-5" />
-                      Heinrich's Safety Pyramid
-                    </CardTitle>
-                    <CardDescription>
-                      Complete dataset analysis - Industry standard ratios (1:10:30:600:3000)
-                    </CardDescription>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => setHeinrichBreakdownOpen(true)}
-                      className="gap-2"
-                    >
-                      <FileText className="h-4 w-4" />
-                      View Breakdown
-                    </Button>
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <Info className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                      <TooltipContent className="max-w-sm">
-                        <p className="font-semibold mb-2">Heinrich's Safety Pyramid (Customized for Our Model)</p>
-                        <p className="text-sm mb-2">Shows the relationship between minor and major safety events, emphasizing proactive prevention.</p>
-                        <p className="text-sm mb-2"><strong>5 Levels (Top to Bottom):</strong></p>
-                        <ul className="text-xs space-y-1 mb-2">
-                          <li>• <strong>Level 1:</strong> Fatalities (C4–C5 Injuries)</li>
-                          <li>• <strong>Level 2:</strong> Serious Injuries (C3)</li>
-                          <li>• <strong>Level 3:</strong> Minor Injuries (C1–C2)</li>
-                          <li>• <strong>Level 4:</strong> Near Misses (C0 actual, C3–C5 worst case)</li>
-                          <li>• <strong>Level 5:</strong> Unsafe Conditions/At-Risk Behaviors (hazards, observations)</li>
-                        </ul>
-                        <p className="text-xs text-muted-foreground">These tiers help focus on leading indicators to prevent severe outcomes.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {/* Map API layers to PyramidChart shape and compute totals */}
-                {(() => {
-                  const apiLayers = Array.isArray(heinrichData.layers) ? heinrichData.layers : [];
-                  const totalEvents = apiLayers.reduce((sum: number, l: any) => sum + (Number(l.count) || 0), 0);
-                  const layersForChart = apiLayers.map((l: any) => ({
-                    level: l.level,
-                    label: l.label,
-                    count: Number(l.count) || 0,
-                    ratio: 0, // Not used by chart
-                    color: l.color || "#7fbf7f",
-                  }));
-
-                  return (
-                    <>
-                      <PyramidChart layers={layersForChart} totalEvents={totalEvents} />
-
-                      {/* Stats */}
-                      <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="p-4 bg-muted rounded-lg">
-                          <span className="text-sm text-muted-foreground">Total Events</span>
-                          <p className="text-2xl font-bold">{totalEvents}</p>
-                        </div>
-                        <div className="p-4 bg-muted rounded-lg">
-                          <span className="text-sm text-muted-foreground">Data Coverage</span>
-                          <p className="text-2xl font-bold">Whole Dataset</p>
-                        </div>
-                        <div className="p-4 bg-muted rounded-lg">
-                          <span className="text-sm text-muted-foreground">Industry Standard</span>
-                          <p className="text-sm font-medium mt-1">1:10:30:600:3000</p>
-                        </div>
-                      </div>
-
-                      {/* Layer details */}
-                      <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {apiLayers.map((l: any, idx: number) => (
-                          <div key={idx} className="p-3 rounded border flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <div className="w-4 h-4 rounded" style={{ backgroundColor: l.color }}></div>
-                              <div>
-                                <p className="text-sm font-medium">{l.label}</p>
-                                <p className="text-xs text-muted-foreground">Level {l.level}</p>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <span className="text-lg font-bold">{l.count}</span>
-                              <span className="text-xs text-muted-foreground block">{l.percent}%</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* HSE Metrics */}
-                      {hseLoading ? (
-                        <div className="mt-6 p-4 bg-muted rounded-lg">
-                          <p className="text-sm text-muted-foreground">Loading HSE metrics...</p>
-                        </div>
-                      ) : hseError ? (
-                        <div className="mt-6 p-4 bg-destructive/10 rounded-lg">
-                          <p className="text-sm text-destructive">Failed to load HSE metrics: {hseError.message}</p>
-                        </div>
-                      ) : hseMetrics ? (
-                        <HseMetricsCard data={hseMetrics} />
-                      ) : null}
-                    </>
-                  );
-                })()}
-              </CardContent>
-            </Card>
-          )}
+        
 
           {/* Actual Risk Score */}
           {actualRiskLoading ? (

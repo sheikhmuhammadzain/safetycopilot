@@ -825,6 +825,7 @@ export default function Overview() {
               title="Root Cause Pareto" 
               endpoint="/analytics/data/root-cause-pareto" 
               params={{ dataset: "incident", ...filterParams }} 
+              height={420}
               refreshKey={refreshKey}
               showIncidentTypeFilter={true}
             />
@@ -966,6 +967,72 @@ export default function Overview() {
                     <li>• <strong>Closed:</strong> Inspections completed/verified in that month</li>
                     <li>• <strong>Gap analysis:</strong> Compare bars to identify backlogs</li>
                     <li>• <strong>Use case:</strong> Track inspection throughput and closure rates</li>
+                  </ul>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+
+          {/* Incident Severity by Type */}
+          <div className="lg:col-span-12 relative">
+            <StackedBarCard
+              title="Incident Severity Distribution by Type"
+              endpoint="/analytics/data/incident-severity-by-type"
+              params={{ ...filterParams }}
+              height={550}
+              refreshKey={refreshKey}
+            />
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button className="absolute top-2 right-2 inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 shadow-sm">
+                    <Info className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="max-w-sm">
+                  <p className="font-semibold mb-2">Incident Severity Distribution by Type</p>
+                  <p className="text-sm mb-2">Shows the breakdown of actual consequences (severity levels) for each incident type with more than 10 occurrences.</p>
+                  <p className="text-sm font-mono bg-muted p-2 rounded mb-2">
+                    Severity Levels: C0 (No Effect) to C5 (Catastrophic)
+                  </p>
+                  <ul className="text-xs space-y-1">
+                    <li>• <strong>Data source:</strong> Incident Type(s) × Actual Consequence (Incident)</li>
+                    <li>• <strong>Filter:</strong> Only incident types with &gt;10 total occurrences</li>
+                    <li>• <strong>Stacked bars:</strong> Each color represents a severity level</li>
+                    <li>• <strong>Use case:</strong> Identify which incident types result in more severe consequences</li>
+                  </ul>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+
+          {/* Injury Penalty by Department */}
+          <div className="lg:col-span-12 relative">
+            <StackedBarCard
+              title="Department Injury Penalty Score"
+              endpoint="/analytics/data/injury-penalty-by-department"
+              params={{ ...filterParams }}
+              height={550}
+              refreshKey={refreshKey}
+            />
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button className="absolute top-2 right-2 inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 shadow-sm">
+                    <Info className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="max-w-sm">
+                  <p className="font-semibold mb-2">Department Injury Penalty Score</p>
+                  <p className="text-sm mb-2">Safety penalty scoring system based on injury severity by department.</p>
+                  <p className="text-sm font-mono bg-muted p-2 rounded mb-2">
+                    Penalty: Minor (C1) = -3 pts | Major (C2, C3) = -10 pts
+                  </p>
+                  <ul className="text-xs space-y-1">
+                    <li>• <strong>Data source:</strong> Injury incidents filtered by Actual Consequence</li>
+                    <li>• <strong>Minor injuries:</strong> C1 - Minor classification</li>
+                    <li>• <strong>Major injuries:</strong> C2 - Serious or C3 - Severe</li>
+                    <li>• <strong>Use case:</strong> Track departmental safety performance with weighted scoring</li>
                   </ul>
                 </TooltipContent>
               </Tooltip>

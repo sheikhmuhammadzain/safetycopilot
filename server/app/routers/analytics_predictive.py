@@ -260,89 +260,154 @@ async def risk_trend_projection(
 # ======================= LEADING VS LAGGING INDICATORS =======================
 
 @router.get("/leading-vs-lagging")
-async def leading_vs_lagging_indicators(
-    start_date: Optional[str] = Query(None, description="Filter start date", example="2023-01-01"),
-    end_date: Optional[str] = Query(None, description="Filter end date", example="2024-12-31"),
-    location: Optional[str] = Query(None, description="Filter by location", example="Karachi"),
-):
+async def leading_vs_lagging_indicators():
     """
     Leading vs Lagging Indicators Comparison.
     
+    NOTE: This endpoint always operates on the FULL DATASET without any filters.
+    
     Leading Indicators (Proactive):
-    - Hazards identified
-    - Audits completed
-    - Inspections performed
-    - Near-miss reports
-    - Training hours
+    - Hazards: Records with valid Incident Number
+    - Audits: Records with valid Audit Number
+    - Inspections: Records with valid Audit Number
+    - Near-miss: Incidents where Actual=C0 and Worst Case>=C3
     
     Lagging Indicators (Reactive):
-    - Incidents occurred
-    - Lost time incidents
-    - Medical treatment cases
-    - Property damage
+    - Injuries: Count of injury incidents
+    - Incidents: Total incidents with valid Incident Number
+    - Fatalities: Injuries with C4/C5 severity
+    - Serious Injuries: Injuries with C3 severity
     """
+    # Load full datasets without any filters
     inc_df = get_incident_df()
     haz_df = get_hazard_df()
     aud_df = get_audit_df()
     insp_df = get_inspection_df()
     
-    # Apply date filters
-    def filter_by_date(df, start_date, end_date):
-        if df is None or df.empty:
-            return df
-        date_col = _resolve_column(df, ["occurrence_date", "date", "start_date", "reported_date"])
-        if date_col:
-            dates = pd.to_datetime(df[date_col], errors="coerce")
-            if start_date:
-                mask = dates >= pd.to_datetime(start_date)
-                df = df.loc[mask]
-            if end_date:
-                mask = dates <= pd.to_datetime(end_date)
-                df = df.loc[mask]
-        return df
+    # ======================= LEADING INDICATORS =======================
     
-    inc_df = filter_by_date(inc_df, start_date, end_date)
-    haz_df = filter_by_date(haz_df, start_date, end_date)
-    aud_df = filter_by_date(aud_df, start_date, end_date)
-    insp_df = filter_by_date(insp_df, start_date, end_date)
+    # Hazards: Count records with valid Incident Number
+    hazards_count = 0
+    if haz_df is not None and not haz_df.empty:
+        incident_num_col = _resolve_column(haz_df, ["Incident Number", "incident_number", "incident number"])
+        if incident_num_col:
+            hazards_count = int(haz_df[incident_num_col].notna().sum())
+        else:
+            hazards_count = len(haz_df)
     
-    # Leading indicators
-    leading = {
-        "hazards_identified": len(haz_df) if haz_df is not None else 0,
-        "audits_completed": 0,
-        "inspections_performed": len(insp_df) if insp_df is not None else 0,
-        "near_miss_reports": 0,
-    }
-    
+    # Audits: Count records with valid Audit Number
+    audits_count = 0
     if aud_df is not None and not aud_df.empty:
-        status_col = _resolve_column(aud_df, ["audit_status", "status"])
-        if status_col:
-            leading["audits_completed"] = aud_df[status_col].astype(str).str.contains(
-                "closed|complete", case=False, na=False
-            ).sum()
+        audit_num_col = _resolve_column(aud_df, ["Audit Number", "audit_number", "audit number"])
+        if audit_num_col:
+            audits_count = int(aud_df[audit_num_col].notna().sum())
+        else:
+            audits_count = len(aud_df)
     
+    # Inspections: Count records with valid Audit Number
+    inspections_count = 0
+    if insp_df is not None and not insp_df.empty:
+        audit_num_col = _resolve_column(insp_df, ["Audit Number", "audit_number", "audit number"])
+        if audit_num_col:
+            inspections_count = int(insp_df[audit_num_col].notna().sum())
+        else:
+            inspections_count = len(insp_df)
+    
+    # Near-miss: Actual Severity = C0 AND Worst Case Severity >= C3
+    near_miss_count = 0
     if inc_df is not None and not inc_df.empty:
-        type_col = _resolve_column(inc_df, ["incident_type", "category"])
-        if type_col:
-            leading["near_miss_reports"] = inc_df[type_col].astype(str).str.contains(
-                "near miss|near-miss", case=False, na=False
-            ).sum()
+        actual_col = _resolve_column(inc_df, [
+            "Actual Consequence (Incident)", 
+            "actual_consequence_incident",
+            "actual consequence incident"
+        ])
+        worst_col = _resolve_column(inc_df, [
+            "Worst Case Consequence (Incident)",
+            "worst_case_consequence_incident",
+            "worst case consequence incident"
+        ])
+        
+        if actual_col and worst_col:
+            # Map severity levels to scores
+            severity_scores = {
+                'C0 - No Ill Effect': 1,
+                'C1 - Minor': 2,
+                'C2 - Serious': 3,
+                'C3 - Severe': 4,
+                'C4 - Major': 5,
+                'C5 - Catastrophic': 5
+            }
+            
+            inc_df_copy = inc_df.copy()
+            inc_df_copy['Actual_Severity'] = inc_df_copy[actual_col].map(severity_scores)
+            inc_df_copy['Worst_Severity'] = inc_df_copy[worst_col].map(severity_scores)
+            
+            # Near-miss: Actual=1 (C0), Worst>=4 (C3/C4/C5)
+            near_miss_mask = (
+                (inc_df_copy['Actual_Severity'] == 1) & 
+                (inc_df_copy['Worst_Severity'] >= 4) &
+                inc_df_copy['Actual_Severity'].notna() &
+                inc_df_copy['Worst_Severity'].notna()
+            )
+            near_miss_count = int(near_miss_mask.sum())
     
-    # Lagging indicators
-    lagging = {
-        "total_incidents": len(inc_df) if inc_df is not None else 0,
-        "lost_time_incidents": 0,
-        "medical_treatment_cases": 0,
-        "serious_incidents": 0,
+    leading = {
+        "Hazards": hazards_count,
+        "Audits": audits_count,
+        "Inspections": inspections_count,
+        "Near-miss": near_miss_count
     }
     
+    # ======================= LAGGING INDICATORS =======================
+    
+    # Total incidents: Count records with valid Incident Number
+    incidents_count = 0
     if inc_df is not None and not inc_df.empty:
-        sev_col = _resolve_column(inc_df, ["severity_score", "risk_score"])
-        if sev_col:
-            severity = pd.to_numeric(inc_df[sev_col], errors="coerce")
-            lagging["lost_time_incidents"] = (severity >= 3).sum()
-            lagging["medical_treatment_cases"] = (severity == 2).sum()
-            lagging["serious_incidents"] = (severity >= 4).sum()
+        incident_num_col = _resolve_column(inc_df, ["Incident Number", "incident_number", "incident number"])
+        if incident_num_col:
+            incidents_count = int(inc_df[incident_num_col].notna().sum())
+        else:
+            incidents_count = len(inc_df)
+    
+    # Injuries: Count incidents where type is 'injury'
+    injuries_count = 0
+    injuries_df = None
+    if inc_df is not None and not inc_df.empty:
+        type_col = _resolve_column(inc_df, ["Incident Type(s)", "incident_type", "incident type"])
+        if type_col:
+            injuries_df = inc_df[
+                inc_df[type_col].astype(str).str.strip().str.lower() == 'injury'
+            ].copy()
+            injuries_count = len(injuries_df)
+    
+    # Serious Injuries: Injuries with C3 severity
+    serious_count = 0
+    if injuries_df is not None and not injuries_df.empty:
+        actual_col = _resolve_column(injuries_df, [
+            "Actual Consequence (Incident)",
+            "actual_consequence_incident",
+            "actual consequence incident"
+        ])
+        if actual_col:
+            serious_count = int((injuries_df[actual_col] == 'C3 - Severe').sum())
+    
+    # Fatalities: Injuries with C4 or C5 severity
+    fatalities_count = 0
+    if injuries_df is not None and not injuries_df.empty:
+        actual_col = _resolve_column(injuries_df, [
+            "Actual Consequence (Incident)",
+            "actual_consequence_incident",
+            "actual consequence incident"
+        ])
+        if actual_col:
+            fatalities_count = int(injuries_df[actual_col].isin(['C4 - Major', 'C5 - Catastrophic']).sum())
+    
+    lagging = {
+        "Injuries": injuries_count,
+        "Incidents": incidents_count,
+        "Fatalities": fatalities_count,
+        "Serious Injuries": serious_count
+    }
     
     # Calculate ratio
     total_leading = sum(leading.values())

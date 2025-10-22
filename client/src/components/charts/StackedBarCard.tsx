@@ -1,9 +1,7 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from "recharts";
-import axios from "axios";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+import { useCachedGet } from "@/hooks/useCachedGet";
 
 interface StackedBarCardProps {
   title: string;
@@ -13,14 +11,24 @@ interface StackedBarCardProps {
   height?: number;
 }
 
-// Color palette for severity levels
-const SEVERITY_COLORS: Record<string, string> = {
+// Color palette for different chart types
+const CHART_COLORS: Record<string, string> = {
+  // Severity levels
   "C0 - No Ill Effect": "#10b981",   // green
   "C1 - Minor": "#3b82f6",           // blue
   "C2 - Serious": "#f59e0b",         // amber
   "C3 - Severe": "#ef4444",          // red
   "C4 - Major": "#dc2626",           // dark red
   "C5 - Catastrophic": "#7f1d1d",    // very dark red
+  
+  // Injury types (for penalty chart)
+  "Minor Injuries": "#60a5fa",       // light blue
+  "Major Injuries": "#ef4444",       // red
+  
+  // Generic fallback colors
+  "Minor": "#60a5fa",
+  "Major": "#ef4444",
+  "Severe": "#dc2626",
 };
 
 export function StackedBarCard({ 
@@ -30,85 +38,89 @@ export function StackedBarCard({
   refreshKey = 0,
   height = 500 
 }: StackedBarCardProps) {
-  const [data, setData] = useState<any[]>([]);
-  const [legend, setLegend] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Use cached API call
+  const { data: apiData, error: apiError, loading } = useCachedGet<{
+    labels: string[];
+    series: Array<{ name: string; data: number[] }>;
+    legend?: string[];
+    totals?: number[];
+  }>(endpoint, params, undefined, refreshKey);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
+  // Transform API response to Recharts format
+  const { data, legend } = useMemo(() => {
+    if (!apiData || !apiData.labels || !apiData.series) {
+      return { data: [], legend: [] };
+    }
+
+    // API format: { labels: [...], series: [{ name: "C0", data: [...] }, ...], legend: [...] }
+    // Recharts format: [{ name: "Type1", C0: 5, C1: 10, ... }, ...]
+    const transformedData = apiData.labels.map((label: string, index: number) => {
+      const item: any = { name: label };
       
-      try {
-        // Build query params
-        const queryParams = new URLSearchParams();
-        Object.entries(params).forEach(([key, value]) => {
-          if (value !== undefined && value !== null) {
-            if (Array.isArray(value)) {
-              value.forEach(v => queryParams.append(key, v));
-            } else {
-              queryParams.append(key, String(value));
-            }
-          }
-        });
-
-        const url = `${API_BASE}${endpoint}${queryParams.toString() ? `?${queryParams.toString()}` : ""}`;
-        const response = await axios.get(url);
-        
-        // Transform API response to Recharts format
-        // API format: { labels: [...], series: [{ name: "C0", data: [...] }, ...], legend: [...] }
-        // Recharts format: [{ name: "Type1", C0: 5, C1: 10, ... }, ...]
-        
-        const apiData = response.data;
-        
-        if (!apiData.labels || !apiData.series) {
-          setData([]);
-          setLegend([]);
-          return;
-        }
-
-        // Transform data
-        const transformedData = apiData.labels.map((label: string, index: number) => {
-          const item: any = { name: label };
-          
-          // Add each severity level's count for this incident type
-          apiData.series.forEach((series: any) => {
-            item[series.name] = series.data[index] || 0;
-          });
-          
-          // Add total if available
-          if (apiData.totals && apiData.totals[index]) {
-            item.total = apiData.totals[index];
-          }
-          
-          return item;
-        });
-
-        setData(transformedData);
-        setLegend(apiData.legend || apiData.series.map((s: any) => s.name));
-        
-      } catch (err: any) {
-        console.error("Error fetching stacked bar data:", err);
-        setError(err.message || "Failed to load data");
-        setData([]);
-        setLegend([]);
-      } finally {
-        setLoading(false);
+      // Add each severity level's count for this incident type
+      apiData.series.forEach((series: any) => {
+        item[series.name] = series.data[index] || 0;
+      });
+      
+      // Add total if available
+      if (apiData.totals && apiData.totals[index]) {
+        item.total = apiData.totals[index];
       }
-    };
+      
+      return item;
+    });
 
-    fetchData();
-  }, [endpoint, JSON.stringify(params), refreshKey]);
+    const legendData = apiData.legend || apiData.series.map((s: any) => s.name);
+
+    return { data: transformedData, legend: legendData };
+  }, [apiData]);
+
+  const error = apiError ? String(apiError) : null;
+
+  // Custom tick component for truncated labels with hover
+  const CustomTick = ({ x, y, payload }: any) => {
+    const maxLength = 20; // Maximum characters to show
+    const text = payload.value || "";
+    const truncatedText = text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
+    
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <title>{text}</title>
+        <text
+          x={0}
+          y={0}
+          dy={16}
+          textAnchor="end"
+          fill="#64748b"
+          fontSize={11}
+          transform="rotate(-45)"
+          style={{ cursor: 'help' }}
+        >
+          {truncatedText}
+        </text>
+      </g>
+    );
+  };
 
   // Custom tooltip
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const total = payload.reduce((sum: number, entry: any) => sum + (entry.value || 0), 0);
+      const isPenaltyChart = title.toLowerCase().includes('penalty');
+      
+      // Calculate penalties for injury penalty chart
+      let minorPenalty = 0;
+      let majorPenalty = 0;
+      if (isPenaltyChart) {
+        const minorEntry = payload.find((p: any) => p.name === 'Minor Injuries');
+        const majorEntry = payload.find((p: any) => p.name === 'Major Injuries');
+        minorPenalty = (minorEntry?.value || 0) * -3;
+        majorPenalty = (majorEntry?.value || 0) * -10;
+      }
       
       return (
-        <div className="bg-white dark:bg-gray-800 p-3 border border-gray-200 dark:border-gray-700 rounded shadow-lg">
-          <p className="font-semibold mb-2">{label}</p>
+        <div className="bg-white dark:bg-gray-800 p-3 border border-gray-200 dark:border-gray-700 rounded shadow-lg min-w-[200px]">
+          <p className="font-semibold mb-2 text-sm">{label}</p>
           <div className="space-y-1">
             {payload.map((entry: any, index: number) => (
               <div key={index} className="flex items-center justify-between gap-4 text-sm">
@@ -117,16 +129,32 @@ export function StackedBarCard({
                     className="w-3 h-3 rounded" 
                     style={{ backgroundColor: entry.color }}
                   />
-                  <span>{entry.name}:</span>
+                  <span className="text-xs">{entry.name}:</span>
                 </div>
-                <span className="font-medium">{entry.value}</span>
+                <span className="font-medium text-xs">{entry.value}</span>
               </div>
             ))}
             <div className="border-t border-gray-200 dark:border-gray-700 mt-2 pt-2">
               <div className="flex justify-between font-semibold text-sm">
-                <span>Total:</span>
+                <span>Total Injuries:</span>
                 <span>{total}</span>
               </div>
+              {isPenaltyChart && (
+                <>
+                  <div className="flex justify-between text-xs text-orange-600 dark:text-orange-400 mt-1">
+                    <span>Minor Penalty:</span>
+                    <span>{minorPenalty} pts</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-red-600 dark:text-red-400">
+                    <span>Major Penalty:</span>
+                    <span>{majorPenalty} pts</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-sm text-red-700 dark:text-red-300 mt-1 pt-1 border-t border-gray-200 dark:border-gray-700">
+                    <span>Total Penalty:</span>
+                    <span>{minorPenalty + majorPenalty} pts</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -163,22 +191,23 @@ export function StackedBarCard({
           <ResponsiveContainer width="100%" height={height}>
             <BarChart
               data={data}
-              margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
+              margin={{ top: 20, right: 30, left: 20, bottom: 140 }}
             >
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
               <XAxis 
                 dataKey="name" 
-                angle={-45}
-                textAnchor="end"
-                height={100}
+                height={130}
                 interval={0}
-                tick={{ fontSize: 12 }}
-                className="text-gray-600 dark:text-gray-400"
+                tick={<CustomTick />}
               />
               <YAxis 
                 tick={{ fontSize: 12 }}
                 className="text-gray-600 dark:text-gray-400"
-                label={{ value: 'Number of Incidents', angle: -90, position: 'insideLeft' }}
+                label={{ 
+                  value: title.toLowerCase().includes('penalty') ? 'Injury Count' : 'Number of Incidents', 
+                  angle: -90, 
+                  position: 'insideLeft' 
+                }}
               />
               <Tooltip content={<CustomTooltip />} />
               <Legend 
@@ -192,7 +221,7 @@ export function StackedBarCard({
                   key={severityLevel}
                   dataKey={severityLevel}
                   stackId="severity"
-                  fill={SEVERITY_COLORS[severityLevel] || "#6b7280"}
+                  fill={CHART_COLORS[severityLevel] || "#6b7280"}
                   name={severityLevel}
                 />
               ))}

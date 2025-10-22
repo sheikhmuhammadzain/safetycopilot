@@ -2393,3 +2393,137 @@ async def generate_data_insights(payload: DataInsightsRequest) -> ChartInsightsR
         parts.extend(dq_notes)
 
     return ChartInsightsResponse(insights_md="\n".join(parts))
+
+
+@router.get("/data/incident-severity-by-type")
+async def incident_severity_by_type():
+    """
+    Returns a crosstab of Incident Type vs Actual Consequence (Severity).
+    Only includes incident types with more than 10 total occurrences.
+    """
+    df = get_incident_df()
+    if df is None or df.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Resolve column names
+    type_col = _resolve_column(df, ["Incident Type(s)", "incident_type", "incident type"]) or df.columns[0]
+    severity_col = _resolve_column(df, [
+        "Actual Consequence (Incident)",
+        "actual_consequence_incident",
+        "actual consequence incident"
+    ]) or df.columns[0]
+    
+    # Create crosstab
+    severity_crosstab = pd.crosstab(
+        df[type_col],
+        df[severity_col],
+        margins=False
+    ).fillna(0).astype(int)
+    
+    # Filter by total occurrences > 10
+    severity_crosstab['Total'] = severity_crosstab.sum(axis=1)
+    severity_crosstab = severity_crosstab[severity_crosstab['Total'] > 10]
+    severity_crosstab = severity_crosstab.sort_values(by='Total', ascending=False)
+    severity_crosstab = severity_crosstab.drop(columns='Total')
+    
+    # Order severity columns
+    severity_order = [
+        'C0 - No Ill Effect',
+        'C1 - Minor',
+        'C2 - Serious',
+        'C3 - Severe',
+        'C4 - Major',
+        'C5 - Catastrophic'
+    ]
+    existing_severities = [s for s in severity_order if s in severity_crosstab.columns]
+    severity_crosstab = severity_crosstab[existing_severities]
+    
+    # Prepare data for frontend (labels as incident types, series as severity levels)
+    labels = severity_crosstab.index.tolist()
+    series = []
+    
+    for severity_level in existing_severities:
+        series.append({
+            "name": severity_level,
+            "data": severity_crosstab[severity_level].tolist()
+        })
+    
+    return JSONResponse(content={"labels": labels, "series": series})
+
+
+@router.get("/data/injury-penalty-by-department")
+async def injury_penalty_by_department():
+    """
+    Returns injury counts and penalties by department.
+    Penalties: Minor injuries (C1) = -3 points, Major injuries (C2, C3) = -10 points.
+    """
+    df = get_incident_df()
+    if df is None or df.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Resolve column names
+    type_col = _resolve_column(df, ["Incident Type(s)", "incident_type", "incident type"]) or df.columns[0]
+    severity_col = _resolve_column(df, [
+        "Actual Consequence (Incident)",
+        "actual_consequence_incident",
+        "actual consequence incident"
+    ]) or df.columns[0]
+    dept_col = _resolve_column(df, ["Department", "department", "Section", "section"]) or df.columns[0]
+    
+    # Filter for injury incidents only - exact match
+    injury_df = df[
+        df[type_col].astype(str).str.strip().str.lower() == 'injury'
+    ].copy()
+    
+    if injury_df.empty:
+        return JSONResponse(content={"labels": [], "series": []})
+    
+    # Separate minor and major injuries
+    minor_df = injury_df[injury_df[severity_col] == 'C1 - Minor']
+    major_df = injury_df[injury_df[severity_col].isin(['C2 - Serious', 'C3 - Severe'])]
+    
+    # Count by department
+    minor_counts = minor_df.groupby(dept_col).size().reset_index(name='Minor_Count')
+    major_counts = major_df.groupby(dept_col).size().reset_index(name='Major_Count')
+    
+    # Merge and calculate penalties
+    dept_summary = pd.merge(minor_counts, major_counts, on=dept_col, how='outer').fillna(0)
+    dept_summary['Minor_Count'] = dept_summary['Minor_Count'].astype(int)
+    dept_summary['Major_Count'] = dept_summary['Major_Count'].astype(int)
+    
+    dept_summary['Minor_Penalty'] = dept_summary['Minor_Count'] * -3
+    dept_summary['Major_Penalty'] = dept_summary['Major_Count'] * -10
+    
+    dept_summary['Total_Abs_Penalty'] = dept_summary['Minor_Penalty'].abs() + dept_summary['Major_Penalty'].abs()
+    
+    # Filter departments with penalties > 0
+    dept_summary = dept_summary[dept_summary['Total_Abs_Penalty'] > 0]
+    
+    # Sort by total penalty (descending)
+    dept_summary = dept_summary.sort_values(by='Total_Abs_Penalty', ascending=False)
+    
+    # Prepare data for frontend
+    labels = dept_summary[dept_col].tolist()
+    
+    series = [
+        {
+            "name": "Minor Injuries",
+            "data": dept_summary['Minor_Count'].tolist(),
+            "penalty": dept_summary['Minor_Penalty'].tolist()
+        },
+        {
+            "name": "Major Injuries",
+            "data": dept_summary['Major_Count'].tolist(),
+            "penalty": dept_summary['Major_Penalty'].tolist()
+        }
+    ]
+    
+    return JSONResponse(content={
+        "labels": labels,
+        "series": series,
+        "penalties": {
+            "minor": dept_summary['Minor_Penalty'].tolist(),
+            "major": dept_summary['Major_Penalty'].tolist(),
+            "total": dept_summary['Total_Abs_Penalty'].tolist()
+        }
+    })
