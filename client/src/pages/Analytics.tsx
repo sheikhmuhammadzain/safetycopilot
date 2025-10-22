@@ -839,7 +839,7 @@ export default function Analytics() {
                 </div>
               </CardContent>
             </Card>
-          ) : actualRiskData && actualRiskData.length > 0 ? (
+          ) : actualRiskData && actualRiskData.data && actualRiskData.data.length > 0 ? (
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -860,20 +860,23 @@ export default function Analytics() {
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent className="max-w-md">
-                        <p className="font-semibold mb-2">Actual Risk Score</p>
-                        <p className="text-sm mb-3">Calculates department risk based on actual injury consequences:</p>
+                        <p className="font-semibold mb-2">Actual Risk Score - Proportion-Based Method</p>
+                        <p className="text-sm mb-3">Calculates risk using department's proportional contribution to each severity level:</p>
                         
                         {/* Formula */}
                         <div className="mb-3">
                           <p className="text-xs font-semibold mb-1">Formula:</p>
-                          <p className="text-sm font-mono bg-muted p-2 rounded text-center">
-                            Risk Score = Severity × Likelihood
+                          <p className="text-sm font-mono bg-muted p-2 rounded">
+                            Risk Score = Σ(Severity × Proportion)
+                          </p>
+                          <p className="text-xs mt-1 text-muted-foreground">
+                            Where Proportion = (Dept Count for Severity) / (Total Count for that Severity)
                           </p>
                         </div>
 
-                        {/* Severity Penalties */}
+                        {/* Severity Scores */}
                         <div className="mb-3">
-                          <p className="text-xs font-semibold mb-1">Severity-Based Penalties:</p>
+                          <p className="text-xs font-semibold mb-1">Severity Scores:</p>
                           <div className="bg-muted p-2 rounded text-xs font-mono space-y-0.5">
                             <div className="flex justify-between">
                               <span>C0 - No Ill Effect:</span>
@@ -892,11 +895,7 @@ export default function Analytics() {
                               <span className="font-bold">4</span>
                             </div>
                             <div className="flex justify-between">
-                              <span>C4 - Major:</span>
-                              <span className="font-bold">5</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>C5 - Catastrophic:</span>
+                              <span>C4-C5 - Major/Catastrophic:</span>
                               <span className="font-bold">5</span>
                             </div>
                           </div>
@@ -904,21 +903,22 @@ export default function Analytics() {
 
                         {/* Details */}
                         <ul className="text-xs space-y-1 mb-2">
-                          <li>• Filters incidents where Type = 'injury'</li>
-                          <li>• Likelihood: Based on injury count quintiles (1-5)</li>
+                          <li>• Filters: Incident Type = 'injury' only</li>
+                          <li>• Weighted by department's share of each severity</li>
+                          <li>• Accounts for both frequency AND severity distribution</li>
                           <li>• Normalized 0-1 scale for comparison</li>
                         </ul>
                         
-                        <p className="text-xs mt-2 text-muted-foreground font-semibold">⚠️ Departments with higher scores need immediate attention</p>
+                        <p className="text-xs mt-2 text-muted-foreground font-semibold">⚠️ Higher scores indicate departments dominating high-severity categories</p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
                 </div>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={Math.max(400, actualRiskData.length * 35)}>
+                <ResponsiveContainer width="100%" height={Math.max(400, actualRiskData.data.length * 35)}>
                   <BarChart
-                    data={actualRiskData.slice(0, 20)}
+                    data={actualRiskData.data.slice(0, 20)}
                     layout="vertical"
                     margin={{ top: 10, right: 80, left: 150, bottom: 10 }}
                     barCategoryGap="20%"
@@ -939,9 +939,10 @@ export default function Analytics() {
                             <div className="bg-background border border-border p-3 rounded shadow-lg">
                               <p className="font-semibold">{data.Department}</p>
                               <div className="mt-2 space-y-1 text-sm">
-                                <p>Actual Risk Score: <span className="font-bold text-orange-500">{data.Actual_Risk_Score}</span></p>
-                                <p>Normalized Score: <span className="font-bold">{(data.Normalized_Score * 100).toFixed(1)}%</span></p>
-                                <p>Likelihood: <span className="font-bold">{data.Likelihood}/5</span></p>
+                                <p>Risk Score: <span className="font-bold text-orange-500">{data.Actual_Risk_Score?.toFixed(3)}</span></p>
+                                <p>Normalized: <span className="font-bold">{(data.Normalized_Score * 100).toFixed(1)}%</span></p>
+                                <p>Avg Proportion: <span className="font-bold">{data.Avg_Proportion?.toFixed(3)}</span></p>
+                                <p>Incident Count: <span className="font-bold">{data.Incident_Count}</span></p>
                               </div>
                             </div>
                           );
@@ -967,19 +968,22 @@ export default function Analytics() {
                 <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="p-4 bg-muted rounded-lg">
                     <span className="text-sm text-muted-foreground">Highest Risk</span>
-                    <p className="text-xl font-bold mt-1">{actualRiskData[0]?.Department || 'N/A'}</p>
+                    <p className="text-xl font-bold mt-1">{actualRiskData.data[0]?.Department || 'N/A'}</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      Score: {actualRiskData[0]?.Actual_Risk_Score?.toFixed(1) || 'N/A'}
+                      Score: {actualRiskData.data[0]?.Actual_Risk_Score?.toFixed(3) || 'N/A'}
                     </p>
                   </div>
                   <div className="p-4 bg-muted rounded-lg">
                     <span className="text-sm text-muted-foreground">Departments Analyzed</span>
-                    <p className="text-xl font-bold mt-1">{actualRiskData.length}</p>
+                    <p className="text-xl font-bold mt-1">{actualRiskData.data.length}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Total: {actualRiskData.metadata?.total_incidents || 'N/A'} incidents
+                    </p>
                   </div>
                   <div className="p-4 bg-muted rounded-lg">
                     <span className="text-sm text-muted-foreground">Average Risk Score</span>
                     <p className="text-xl font-bold mt-1">
-                      {(actualRiskData.reduce((sum: number, d: any) => sum + d.Actual_Risk_Score, 0) / actualRiskData.length).toFixed(1)}
+                      {(actualRiskData.data.reduce((sum: number, d: any) => sum + d.Actual_Risk_Score, 0) / actualRiskData.data.length).toFixed(3)}
                     </p>
                   </div>
                 </div>
@@ -1010,7 +1014,7 @@ export default function Analytics() {
                 </div>
               </CardContent>
             </Card>
-          ) : potentialRiskData && potentialRiskData.length > 0 ? (
+          ) : potentialRiskData && potentialRiskData.data && potentialRiskData.data.length > 0 ? (
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -1031,14 +1035,17 @@ export default function Analytics() {
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent className="max-w-md">
-                        <p className="font-semibold mb-2">Potential Risk Score - Near-Miss Analysis</p>
-                        <p className="text-sm mb-3">Identifies high-potential near-misses by department:</p>
+                        <p className="font-semibold mb-2">Potential Risk Score - Proportion-Based Near-Miss</p>
+                        <p className="text-sm mb-3">Calculates risk using department's proportional contribution to worst-case severity:</p>
                         
                         {/* Formula */}
                         <div className="mb-3">
                           <p className="text-xs font-semibold mb-1">Formula:</p>
-                          <p className="text-sm font-mono bg-muted p-2 rounded text-center">
-                            Potential Risk = Worst Case Severity × Likelihood
+                          <p className="text-sm font-mono bg-muted p-2 rounded">
+                            Risk Score = Σ(Worst_Severity × Proportion)
+                          </p>
+                          <p className="text-xs mt-1 text-muted-foreground">
+                            Where Proportion = (Dept Count for Worst Severity) / (Total Count for that Worst Severity)
                           </p>
                         </div>
 
@@ -1088,9 +1095,9 @@ export default function Analytics() {
                 </div>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={Math.max(500, potentialRiskData.length * 30)}>
+                <ResponsiveContainer width="100%" height={Math.max(500, potentialRiskData.data.length * 30)}>
                   <BarChart
-                    data={potentialRiskData.slice(0, 30)}
+                    data={potentialRiskData.data.slice(0, 30)}
                     layout="vertical"
                     margin={{ top: 10, right: 80, left: 180, bottom: 10 }}
                     barCategoryGap="15%"
@@ -1111,9 +1118,10 @@ export default function Analytics() {
                             <div className="bg-background border border-border p-3 rounded shadow-lg">
                               <p className="font-semibold">{data.Department}</p>
                               <div className="mt-2 space-y-1 text-sm">
-                                <p>Potential Risk Score: <span className="font-bold text-yellow-500">{data.Potential_Risk_Score}</span></p>
-                                <p>Normalized Score: <span className="font-bold">{(data.Normalized_Potential_Score * 100).toFixed(1)}%</span></p>
-                                <p>Likelihood: <span className="font-bold">{data.Potential_Likelihood}/5</span></p>
+                                <p>Risk Score: <span className="font-bold text-yellow-500">{data.Potential_Risk_Score?.toFixed(3)}</span></p>
+                                <p>Normalized: <span className="font-bold">{(data.Normalized_Potential_Score * 100).toFixed(1)}%</span></p>
+                                <p>Avg Proportion: <span className="font-bold">{data.Avg_Proportion?.toFixed(3)}</span></p>
+                                <p>Near-Miss Count: <span className="font-bold">{data.Near_Miss_Count}</span></p>
                               </div>
                               <p className="text-xs mt-2 text-muted-foreground">Near-misses that could have been serious</p>
                             </div>
@@ -1140,19 +1148,22 @@ export default function Analytics() {
                 <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="p-4 bg-yellow-50 dark:bg-yellow-950/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
                     <span className="text-sm text-muted-foreground">Highest Potential Risk</span>
-                    <p className="text-xl font-bold mt-1">{potentialRiskData[0]?.Department || 'N/A'}</p>
+                    <p className="text-xl font-bold mt-1">{potentialRiskData.data[0]?.Department || 'N/A'}</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      Score: {potentialRiskData[0]?.Potential_Risk_Score?.toFixed(1) || 'N/A'}
+                      Score: {potentialRiskData.data[0]?.Potential_Risk_Score?.toFixed(3) || 'N/A'}
                     </p>
                   </div>
                   <div className="p-4 bg-muted rounded-lg">
                     <span className="text-sm text-muted-foreground">Departments with Near-Misses</span>
-                    <p className="text-xl font-bold mt-1">{potentialRiskData.length}</p>
+                    <p className="text-xl font-bold mt-1">{potentialRiskData.data.length}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Total: {potentialRiskData.metadata?.total_near_miss || 'N/A'} near-misses
+                    </p>
                   </div>
                   <div className="p-4 bg-muted rounded-lg">
                     <span className="text-sm text-muted-foreground">Average Potential Risk</span>
                     <p className="text-xl font-bold mt-1">
-                      {(potentialRiskData.reduce((sum: number, d: any) => sum + d.Potential_Risk_Score, 0) / potentialRiskData.length).toFixed(1)}
+                      {(potentialRiskData.data.reduce((sum: number, d: any) => sum + d.Potential_Risk_Score, 0) / potentialRiskData.data.length).toFixed(3)}
                     </p>
                   </div>
                 </div>
