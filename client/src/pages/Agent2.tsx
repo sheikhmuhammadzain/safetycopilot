@@ -382,7 +382,7 @@
   }
 
   // Constants for memory management
-  const MEMORY_LIMIT = 3; // Retain only last 3 messages for agent context
+  const MEMORY_LIMIT = 5; // Retain only last 3 messages for agent context
 
   export default function Agent2() {
     const [question, setQuestion] = useState("");
@@ -441,13 +441,20 @@
     const conversationHistoryRef = useRef<ConversationMessage[]>([]);
 
     /**
-     * Get recent conversation context for agent memory (last N messages)
-     * Best Practice: Separate UI history (full) from agent context (limited)
+     * Get recent conversation messages for agent context/memory
      * @param limit - Number of recent messages to include (default: MEMORY_LIMIT)
-     * @returns Array of recent messages for agent context
+     * @returns Array of recent messages for agent context (only completed messages)
      */
     const getRecentContext = (limit: number = MEMORY_LIMIT): ConversationMessage[] => {
-      return conversationHistory.slice(-limit);
+      // Only include completed messages (has both question and analysis/answer)
+      const completedMessages = conversationHistory.filter(msg => 
+        msg.status === 'complete' && 
+        msg.question && 
+        (msg.analysis || msg.response?.analysis || msg.response?.answer)
+      );
+      
+      // Get last N completed messages
+      return completedMessages.slice(-limit);
     };
 
     /**
@@ -828,7 +835,7 @@
         question: q,
         dataset: d,
         model: "z-ai/glm-4.6",
-
+        context: JSON.stringify(contextForBackend),  // Send conversation history
         persona: persona  // Send user persona
       });
 
