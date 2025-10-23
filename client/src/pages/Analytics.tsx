@@ -395,8 +395,8 @@ export default function Analytics() {
         {/* Section 3: Advanced Analytics */}
         <div className="space-y-4">
           <h2 className="text-xl font-semibold text-foreground">Advanced Analytics</h2>
-          
-          {/* Safety Index */}
+{/*           
+          Safety Index
           {safetyLoading ? (
             <Card>
               <CardHeader>
@@ -504,7 +504,7 @@ export default function Analytics() {
                 </div>
               </CardContent>
             </Card>
-          )}
+          )} */}
 
           {/* Leading vs Lagging */}
           {leadingLoading ? (
@@ -1084,7 +1084,7 @@ export default function Analytics() {
                         <ul className="text-xs space-y-1 mb-2">
                           <li>• Filters: Actual ≤ C1, Worst-Case ≥ C3</li>
                           <li>• Shows what "could have happened"</li>
-                          <li>• Likelihood: Based on near-miss frequency (1-5)</li>
+                          <li>• Accounts for both frequency AND severity distribution</li>
                           <li>• Normalized 0-1 scale for comparison</li>
                         </ul>
                         
